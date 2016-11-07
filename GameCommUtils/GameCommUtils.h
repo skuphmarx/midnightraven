@@ -15,6 +15,9 @@ using namespace std;
 #define KNOCK_OCCURRED 81
 #define RESET_EVENT 99
 
+int resetCard[5] = {185,233,104,133,189};  // This is the ID(s) of the reset card
+
+
 // Bus id definition
 //uint8_t bus_id[] = {0, 0, 0, 1};
 //int packet;
@@ -23,7 +26,7 @@ using namespace std;
 struct eventDataStruct {
 		int sentFrom = -1;
 		int event = -1;
-		String data = "";
+		char data[20] = "";
 };
 
 static void (*gameEventOccurred)(void);
@@ -64,7 +67,7 @@ Serial.println(length);
      EventDataBuffer[i-2] = (char)payload[i];
   }
   EventDataBuffer[length-2] = 0;
-  eventData.data = String(EventDataBuffer);
+  strcpy(eventData.data,EventDataBuffer);
 
   gameEventOccurred();
   
