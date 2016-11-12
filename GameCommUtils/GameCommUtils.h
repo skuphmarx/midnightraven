@@ -5,7 +5,8 @@ using namespace std;
 #define COMM_PIN 12
 
 #define GAME_CONTROLLER_NODE 10    // This is the node controlling what is going on
-#define MP3_PLAYER_NODE 11          // This is the old man talking
+#define MP3_PLAYER_NODE 11         // This is the old man talking
+#define FISH_SORTING_GAME_NODE 20  // Fish On Posts
 
 #define DOOR_KNOCKER 13
 
