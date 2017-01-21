@@ -26,8 +26,8 @@
 
 using namespace std;
 
-//TODO move to GameCommUtils
-#define MASTER_MIND_POT_GAME_NODE 22
+//moved to GameCommUtils
+//#define MASTER_MIND_POT_GAME_NODE 22
 
 // Uncomment to enable event communications
 //#define DO_GAME_EVENT_COMM
@@ -123,7 +123,7 @@ class RFIDTag {
     }
 
     void printIdToSerial() {
-      for (byte i = 0; i < size; i++) {
+      for (byte i=0; i<size; i++) {
         Serial.print(id[i] < 0x10 ? " 0" : " ");
         Serial.print(id[i], HEX);
       }
@@ -132,7 +132,7 @@ class RFIDTag {
 };
 
 /**
- * 
+ * Represents an individual FlowerPot. Contains the Tags that are associated with the flowerpot.
  */
 class FlowerPot {
 
@@ -153,6 +153,9 @@ class FlowerPot {
       return id;
     }
 
+    /**
+     * Initialize the pot with known tags.
+     */
     void addKnownTag(RFIDTag* tag) {
       if (numberKnownTags < MAX_TAGS_PER_POT) {
         knownTags[numberKnownTags] = tag;
@@ -162,6 +165,9 @@ class FlowerPot {
       }
     }
 
+    /**
+     * Returns true if the input tag is one of the tags that is associated with this pot.
+     */
     bool isKnownTag(RFIDTag* tag) {
       for (int i=0; i<numberKnownTags; i++) {
         if (*tag == *knownTags[i]) {
@@ -328,6 +334,9 @@ class MasterMindGameSolution {
       numberSolutionPots = 0;
     }
 
+    /**
+     * Initialize the solutions with the pots in the solution.
+     */
     void addSolutionFlowerPot(FlowerPot* p) {
       if (numberSolutionPots < MAX_POTS_PER_SOLUTION) {
         solutionPots[numberSolutionPots] = p;
@@ -349,6 +358,9 @@ class MasterMindGameSolution {
       return solutionPots[index];
     }
 
+    /**
+     * Returns true if the input tag is part of the solution, false otherwise.
+     */
     bool isTagInSolution(RFIDTag* tag) {
       for (int ip=0; ip<numberSolutionPots; ip++) {
         if (solutionPots[ip]->isKnownTag(tag)) {
@@ -436,7 +448,7 @@ class MasterMindFlowerPotGame {
     }
 
     /**
-     * This needs to be called once all the Readers and FlowerPots have been added.
+     * This needs to be called after all the Readers and FlowerPots have been added.
      */
     void initializeGameSolutions() {
        // At some point if needed this can be done more elegantly.
