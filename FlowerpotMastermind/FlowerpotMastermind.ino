@@ -1,8 +1,6 @@
-
-// RFID Cards
-// 1 = C2 66 7F 64 (194 102 127 100 191)
-// 2 = E6 D3 2D 12
-// 3 = 54 99 DE FC
+/**
+ * Mastermind Flower Pot Game Node.
+ */
 
 // Wires to RFID Readers, right to left: red, brown, black, blue, orange/purple, yellow, green/white. Last pin is empty.
 
@@ -26,9 +24,6 @@
 
 using namespace std;
 
-//moved to GameCommUtils
-//#define MASTER_MIND_POT_GAME_NODE 22
-
 // Uncomment to enable event communications
 //#define DO_GAME_EVENT_COMM
 
@@ -36,7 +31,7 @@ using namespace std;
 #define DO_DEBUG
 
 // Uncomment to enable printing game status details
-//#define DO_GAME_STATUS_DETAILS
+#define DO_GAME_STATUS_DETAILS
 
 // Board locations *******************
   
@@ -45,6 +40,7 @@ using namespace std;
 #define RST_PIN           10 // RFID reset pin. Configurable but shared by all RFID readers
 
 // Reader pin numbers are assumed sequential starting with this value.
+// These are the slave select lines of the RFID readers.
 #define READER_INITIAL_RFID_NSS_PIN    7
 #define NUM_MM_READERS 3
 
@@ -280,16 +276,19 @@ class MasterMindReader: public GameRFIDReader {
     /**
      * This method sets the current tag ID if the current tagId is unset or updates the last update time
      * if the provided uid equals the current tag Id. We want only one tag per reader at at time, the first
-     * one wins.
+     * one wins. If this update was a new tag then the true is returned, otherwise false is returned.
      */
-    void processTagUpdate(MFRC522::Uid *uid) {
+    boolean processTagUpdate(MFRC522::Uid *uid) {
+      bool updateWasNewTag = false;
       if (currentRFIDTag->isIdClear()) {
         currentRFIDTag->setId(uid);
         timeLastChanged = millis();
         timeLastUpdated = timeLastChanged;
+        updateWasNewTag = true;
       } else if (currentRFIDTag->isEqualId(uid)) {
         timeLastUpdated = millis();
       }
+      return updateWasNewTag;
     }
 
     void clearCurrentTag() {
@@ -396,6 +395,83 @@ class MasterMindFlowerPotGame {
 
     int gameSolutionNumber = 0;
 
+    /**
+     * Chooses a new random solution from one of the possible solutions and returns the index
+     * of the choosen solution.
+     */
+    int initRandomSolution() {
+      if (NUM_GAME_SOLUTIONS > 1) {
+        gameSolutionNumber = random(0, NUM_GAME_SOLUTIONS);  // Returns a long value from 0 to NUM_GAME_SOLUTIONS-1
+      }
+    return gameSolutionNumber;
+    }
+
+    /**
+     * Processes updates from the RFID cards. Called from the update status method.
+     * Returns true if at lease one new tag was found, false otherwise.
+     */
+    bool processReaderUpdate() {
+      bool atLeastOneNewTag = false;
+      for (uint8_t reader=0; reader<numReaders; reader++) {
+        MasterMindReader* mmReader = readers[reader];
+        if (mmReader->isTagDataAvailable()) {
+          atLeastOneNewTag = atLeastOneNewTag || mmReader->processTagUpdate(&mmReader->uid);
+        }
+      }
+      return atLeastOneNewTag;
+    }
+
+    /**
+     * Loops through the readers and updates the game status based on the current state of the readers.
+     */
+    void processReaderCurrentStatus() {
+
+      unsigned long now = millis();
+
+      numberFlowerPotsOnReaders = 0;
+      numberCorrectFlowerPots = 0;
+      
+      for (int reader=0; reader<numReaders; reader++) {
+        MasterMindReader* mmReader = readers[reader];
+        mmReader->setTagCorrect(false);
+
+        if ( mmReader->isTagPresent() ) {
+
+          // Check the timeout for last update from the reader. Clear if we have exceeded the timeout.
+          // This is the amount of time that the tag needs to be off the reader before we acknowledge it.
+          // Need to account for random-ness of when we get updates from the card relative to how often
+          // we "loop". 
+          if ((now - mmReader->getTimeLastUpdated()) > 2000 ) {
+            mmReader->clearCurrentTag();
+            gameStatusChanged = true;
+            
+          } else {
+
+            // We have a pot on a reader
+            numberFlowerPotsOnReaders++;
+
+            // Loop over all the pots and set the current pot independent of it being correct or not
+            for (int ipot=0; ipot<numFlowerPots; ipot++) {
+              FlowerPot* flowerPot = flowerPots[ipot];
+              if (flowerPot->isKnownTag(mmReader->getCurrentTag())) {
+                mmReader->setCurrentFlowerPot(flowerPot);
+              }
+            }
+
+            // See if this pot is one of the answers
+            MasterMindGameSolution* currentSolution = solutions[gameSolutionNumber];
+            if (currentSolution->isTagInSolution(mmReader->getCurrentTag())) {
+              numberCorrectFlowerPots++;
+              mmReader->setTagCorrect(true);
+            }
+            
+          }
+        }
+      }
+
+    }
+
+
   public:
 
     unsigned long lastPrintTime = 0;
@@ -469,6 +545,7 @@ class MasterMindFlowerPotGame {
       gameStatusChanged = false;
       numberFlowerPotsOnReaders = 0;
       numberCorrectFlowerPots = 0;
+      initRandomSolution();
     }
 
     bool getGameStatusChanged() {
@@ -495,71 +572,24 @@ class MasterMindFlowerPotGame {
       return (numberCorrectFlowerPots == NUM_POTS_PER_SOLUTION);
     }
 
-    void processReaderUpdate() {
-      for (uint8_t reader=0; reader<numReaders; reader++) {
-        MasterMindReader* mmReader = readers[reader];
-        if (mmReader->isTagDataAvailable()) {
-          mmReader->processTagUpdate(&mmReader->uid);
-        }
-      }
-    }
-
+    /**
+     * Main update method that should be called from the "loop".
+     */
     void updateGameStatus() {
 
-      // Game status change set to false at beginning of each status update.
-      gameStatusChanged = false;
+      // Update data that may be avaiable from the RFID cards.
+      gameStatusChanged = processReaderUpdate();
 
-      // Clear out the current number of flower pots so that we can get the current count
-      numberFlowerPotsOnReaders = 0;
-      numberCorrectFlowerPots = 0;
-
-      unsigned long now = millis();
-
-      for (int reader=0; reader<numReaders; reader++) {
-        MasterMindReader* mmReader = readers[reader];
-        mmReader->setTagCorrect(false);
-
-        if ( mmReader->isTagPresent() ) {
-
-          // Check the timeout for last update from the reader. Clear if we have exceeded the timeout.
-          if ((now - mmReader->getTimeLastUpdated()) > 2000 ) {
-            mmReader->clearCurrentTag();
-            gameStatusChanged = true;
-            
-          } else {
-
-            // We have a pot on a reader
-            numberFlowerPotsOnReaders++;
-            
-            // If the last change is "recent" then set status changed. This is fuzzy but helps when multiple tags are on the reader at once.
-            if ((now - mmReader->getTimeLastChanged()) < 1000) {
-              gameStatusChanged = true;
-            }
-
-            // Loop over all the pots and set the current pot independent of it being correct or not
-            for (int ipot=0; ipot<numFlowerPots; ipot++) {
-              FlowerPot* flowerPot = flowerPots[ipot];
-              if (flowerPot->isKnownTag(mmReader->getCurrentTag())) {
-                mmReader->setCurrentFlowerPot(flowerPot);
-              }
-            }
-
-            // See if this pot is one of the answers
-            MasterMindGameSolution* currentSolution = solutions[gameSolutionNumber];
-            if (currentSolution->isTagInSolution(mmReader->getCurrentTag())) {
-              numberCorrectFlowerPots++;
-              mmReader->setTagCorrect(true);
-            }
-            
-          }
-        }
-      } 
+      // Update to current state
+      processReaderCurrentStatus();
+       
     }
+
   
 };
 
 // This is the main game object
-MasterMindFlowerPotGame* mmGame;
+MasterMindFlowerPotGame* mmGameInstance;
 
 
 /**
@@ -575,14 +605,19 @@ void setup() {
   Serial.println("Setup started.");
 #endif
 
+  // Initialize random seed value. Using pin 0. It is assumed that this pin is not used.
+  // Doing this allows the random method to return a random sequence from one run of the
+  // Arduino to the next.
+  randomSeed(analogRead(0));
+
   // Initialize mastermind
-  initializeMastermind();
+  mmGameInstance = initializeMastermind();
 
   // Initialize game event communications
   initializeGameEventComm(); 
 
   // Initialize RFID
-  initializeRFID();
+  initializeRFID(mmGameInstance);
 
   // Reset all game data and other state
   reset(); 
@@ -598,16 +633,16 @@ void setup() {
 }
 
 /**
- * 
+ * Inializes the game instance objects. Should be called once from the setup() function.
  */
-void initializeMastermind() {
+MasterMindFlowerPotGame* initializeMastermind() {
 
   // Create game instance
-  mmGame = new MasterMindFlowerPotGame();
+  MasterMindFlowerPotGame* newGame = new MasterMindFlowerPotGame();
 
   // Create and add a readers
   for (uint8_t reader=0; reader<NUM_MM_READERS; reader++) {
-    mmGame->addReader(new MasterMindReader(READER_INITIAL_RFID_NSS_PIN + reader, RST_PIN));  
+    newGame->addReader(new MasterMindReader(READER_INITIAL_RFID_NSS_PIN + reader, RST_PIN));  
   }
 
   // Initialize flower pots that can be part of a solution. Each pot has two RFID tags that can represent it.
@@ -616,12 +651,13 @@ void initializeMastermind() {
     FlowerPot* fp = new FlowerPot(ip + 1);
     fp->addKnownTag(new RFIDTag(tagIdsByFlowerPot[ip][0], 4)); // 4 is the number of bytes in the RFID
     fp->addKnownTag(new RFIDTag(tagIdsByFlowerPot[ip][1], 4));
-    mmGame->addFlowerPot(fp);    
+    newGame->addFlowerPot(fp);    
   }
 
   // Initialize the game solutions. This call needs to occur after all the pots and readers have been added to the game.
-  mmGame->initializeGameSolutions();
+  newGame->initializeGameSolutions();
 
+return newGame;
 }
 
 /**
@@ -640,9 +676,9 @@ void initializeGameEventComm() {
 }
 
 /**
- * 
+ * Initializes the RFID readers. Should be called once from setup() after the game has been initialized
  */
-void initializeRFID() {
+void initializeRFID(MasterMindFlowerPotGame* mmGame) {
 
 #ifdef DO_DEBUG
   Serial.println("Begin RFID initialization.");
@@ -702,11 +738,19 @@ void receiveCommEvent() {
 }
 
 void reset() {
+  
   //This should reset self plus all connected game nodes (if any).
-   Serial.print("Reset FlowerPot Game data: ");
+#ifdef DO_DEBUG
+   Serial.print(F("Reset FlowerPot Game data: "));
    Serial.println(eventData.data);
+#endif
 
-   mmGame->reset();
+   mmGameInstance->reset();
+
+#ifdef DO_DEBUG
+   Serial.print(F("  Game solution number is: "));
+   Serial.println(mmGameInstance->getGameSolutionNumber());
+#endif
 
   
 }
@@ -743,14 +787,13 @@ void loop() {
   doComm();
 #endif
 
-  mmGame->processReaderUpdate();
-
-  mmGame->updateGameStatus();
+  // Update the game
+  mmGameInstance->updateGameStatus();
 
 #ifdef DO_DEBUG
-  if ( mmGame->getGameStatusChanged() || (millis() - mmGame->lastPrintTime) > 5000) {
-    printCurrentGameStatus();
-    mmGame->lastPrintTime = millis();
+  if ( mmGameInstance->getGameStatusChanged() || (millis() - mmGameInstance->lastPrintTime) > 5000) {
+    printCurrentGameStatus(mmGameInstance);
+    mmGameInstance->lastPrintTime = millis();
   }
 #endif
   
@@ -760,10 +803,9 @@ void loop() {
 /**
  * 
  */
-void printCurrentGameStatus() {
+void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 
   Serial.println(F("**Current game status:"));
-
   Serial.print(F("  Number of flower pots: "));
   Serial.println(mmGame->getNumberFlowerPotsOnReaders());
 
@@ -776,6 +818,9 @@ void printCurrentGameStatus() {
   }
 
 #ifdef DO_GAME_STATUS_DETAILS
+  Serial.print(F("  Solution number is "));
+  Serial.println(mmGame->getGameSolutionNumber());
+  
   Serial.print(F("  Number of correct flower pots: "));
   Serial.println(mmGame->getNumberCorrectFlowerPots());
 
