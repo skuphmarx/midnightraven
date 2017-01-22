@@ -34,10 +34,12 @@ using namespace std;
 #define DO_GAME_STATUS_DETAILS
 
 // Board locations *******************
-  
-#define BREADBOARD_LED     3 // LED for testing on bread board only
 
-#define RST_PIN           10 // RFID reset pin. Configurable but shared by all RFID readers
+// PIN for comm
+#define GAME_COMM_PIN 3
+
+// RFID reset pin. Configurable but shared by all RFID readers
+#define RST_PIN         10 
 
 // Reader pin numbers are assumed sequential starting with this value.
 // These are the slave select lines of the RFID readers.
@@ -64,10 +66,6 @@ byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xF4, 0x68, 0x9B, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // 10.1, 10.2
 };
 
-
-// Local method declarations
-void flashLED (int ledPort, int duration, int numFlashes);
-void dump_byte_array(byte *buffer, byte bufferSize);
 
 /**
  * RFID Tag.
@@ -219,7 +217,6 @@ class GameRFIDReader: public MFRC522 {
 
       // Initialize the RFID reader card
       // Retires do not seem to help.
-      byte v = 0x00;
       for (byte bb=0; bb<1; bb++) {
         // Maybe help inconsistent startup? Does not seem to help.
         //delay(500);
@@ -276,17 +273,19 @@ class MasterMindReader: public GameRFIDReader {
     /**
      * This method sets the current tag ID if the current tagId is unset or updates the last update time
      * if the provided uid equals the current tag Id. We want only one tag per reader at at time, the first
-     * one wins. If this update was a new tag then the true is returned, otherwise false is returned.
+     * one wins. If this update was a new tag then true is returned, otherwise false is returned.
      */
-    boolean processTagUpdate(MFRC522::Uid *uid) {
+    boolean processTagUpdate() {
       bool updateWasNewTag = false;
-      if (currentRFIDTag->isIdClear()) {
-        currentRFIDTag->setId(uid);
-        timeLastChanged = millis();
-        timeLastUpdated = timeLastChanged;
-        updateWasNewTag = true;
-      } else if (currentRFIDTag->isEqualId(uid)) {
-        timeLastUpdated = millis();
+      if (isTagDataAvailable()) {
+        if (currentRFIDTag->isIdClear()) {
+          currentRFIDTag->setId(&this->uid);
+          timeLastChanged = millis();
+          timeLastUpdated = timeLastChanged;
+          updateWasNewTag = true;
+        } else if (currentRFIDTag->isEqualId(&this->uid)) {
+          timeLastUpdated = millis();
+        }
       }
       return updateWasNewTag;
     }
@@ -345,17 +344,21 @@ class MasterMindGameSolution {
       }
     }
 
-    FlowerPot** getSolutionFlowerPots() {
-      return solutionPots;
-    }
+    // Don't yet have a need for these. ******
+    
+    //FlowerPot** getSolutionFlowerPots() {
+    //  return solutionPots;
+    //}
 
-    int getNumberSolutionPots() {
-      return numberSolutionPots;
-    }
+    //int getNumberSolutionPots() {
+    //  return numberSolutionPots;
+    //}
 
-    FlowerPot* getSolutionFlowerPot(int index) {
-      return solutionPots[index];
-    }
+    //FlowerPot* getSolutionFlowerPot(int index) {
+    //  return solutionPots[index];
+    //}
+
+    // *****************************************
 
     /**
      * Returns true if the input tag is part of the solution, false otherwise.
@@ -414,8 +417,8 @@ class MasterMindFlowerPotGame {
       bool atLeastOneNewTag = false;
       for (uint8_t reader=0; reader<numReaders; reader++) {
         MasterMindReader* mmReader = readers[reader];
-        if (mmReader->isTagDataAvailable()) {
-          atLeastOneNewTag = atLeastOneNewTag || mmReader->processTagUpdate(&mmReader->uid);
+        if (mmReader->processTagUpdate()) {
+          atLeastOneNewTag = true;
         }
       }
       return atLeastOneNewTag;
@@ -578,6 +581,7 @@ class MasterMindFlowerPotGame {
     void updateGameStatus() {
 
       // Update data that may be avaiable from the RFID cards.
+      // Game status changed is true if one of the readers has a new tag, false otherwise.
       gameStatusChanged = processReaderUpdate();
 
       // Update to current state
@@ -588,8 +592,74 @@ class MasterMindFlowerPotGame {
   
 };
 
+/**
+ * This class represents the Arduino card, it contains methods that interact with the card.
+ */
+class MasterMindArduino {
+
+  MasterMindFlowerPotGame* mmGame;
+
+  public:
+
+    MasterMindArduino(MasterMindFlowerPotGame* game) {
+      mmGame = game;
+    }
+
+    /**
+     * Initializes the RFID readers. Should be called once from setup() after the game has been initialized
+     */
+    void initializeRFID() {
+
+#ifdef DO_DEBUG
+      Serial.println("Begin RFID initialization.");
+#endif
+
+      // Init SPI bus to communicate with RFID cards
+      SPI.begin();
+
+      for (uint8_t reader = 0; reader < mmGame->getNumReaders(); reader++) {
+        MasterMindReader* mmReader = mmGame->getReader(reader);
+        int pinId = mmReader->getPinId();
+
+#ifdef DO_DEBUG
+        Serial.print(F("Reader "));
+        Serial.print(reader+1);
+        Serial.print(F(" using pin "));
+        Serial.print(pinId);
+        Serial.print(F("."));
+#endif
+
+        // Initialize this mmReader's arduino card pin
+        pinMode(pinId, OUTPUT);
+        digitalWrite(pinId, HIGH);
+
+        // Initialize the RFID reader card
+        bool initGood = mmReader->initializeFirmwareCommunication();
+
+#ifdef DO_DEBUG
+        Serial.print(F(" Firmware init is "));
+        Serial.print(initGood ? F("good.") : F("bad."));
+        Serial.print(F(" Version: 0x"));
+        Serial.print(mmReader->getFirmwareVersionValue(), HEX);
+        Serial.print(mmReader->isExpectedFirmwareVersion() ? F(" [IsExpected] ") : F(" [IsNotExpected] "));
+        mmReader->PCD_DumpVersionToSerial();
+#endif
+    
+      }
+
+#ifdef DO_DEBUG
+      Serial.println("Finished RFID initialization.");
+#endif
+  
+    }
+
+};
+
 // This is the main game object
 MasterMindFlowerPotGame* mmGameInstance;
+
+// This is the arduino
+MasterMindArduino* mmArduino;
 
 
 /**
@@ -606,26 +676,25 @@ void setup() {
 #endif
 
   // Initialize random seed value. Using pin 0. It is assumed that this pin is not used.
-  // Doing this allows the random method to return a random sequence from one run of the
+  // Doing this allows the random method to return a random sequence from one "run" of the
   // Arduino to the next.
   randomSeed(analogRead(0));
 
   // Initialize mastermind
   mmGameInstance = initializeMastermind();
 
+  // Create the Arduino object
+  mmArduino = new MasterMindArduino(mmGameInstance);
+
   // Initialize game event communications
   initializeGameEventComm(); 
 
   // Initialize RFID
-  initializeRFID(mmGameInstance);
+  mmArduino->initializeRFID();
 
   // Reset all game data and other state
   reset(); 
   
-  //Flash bread board LED to indicate startup completed
-  pinMode(BREADBOARD_LED,OUTPUT);
-  flashLED(BREADBOARD_LED, 175, 3);
-
 #ifdef DO_DEBUG
   Serial.println("Setup finished.");
 #endif
@@ -665,7 +734,8 @@ return newGame;
  */
 void initializeGameEventComm() {
 #ifdef DO_GAME_EVENT_COMM
-  initCommunications(MASTER_MIND_POT_GAME_NODE);  // THIS Is defined in the GameCommUtils file
+  // Node ID is in GameCommUtil.h
+  initOverrideComm(MASTER_MIND_POT_GAME_NODE, GAME_COMM_PIN);
   setLocalEventHandler(receiveCommEvent);
   setLocalErrorHandler(errorHandler);
   Serial.println("Game Event Communications initialized.");
@@ -675,56 +745,6 @@ void initializeGameEventComm() {
 #endif
 }
 
-/**
- * Initializes the RFID readers. Should be called once from setup() after the game has been initialized
- */
-void initializeRFID(MasterMindFlowerPotGame* mmGame) {
-
-#ifdef DO_DEBUG
-  Serial.println("Begin RFID initialization.");
-#endif
-
-  // Init SPI bus to communicate with RFID cards
-  SPI.begin();
-
-  // Maybe?
-  //delay(1000);
-
-  for (uint8_t reader = 0; reader < mmGame->getNumReaders(); reader++) {
-    MasterMindReader* mmReader = mmGame->getReader(reader);
-    int pinId = mmReader->getPinId();
-
-#ifdef DO_DEBUG
-    Serial.print(F("Reader "));
-    Serial.print(reader+1);
-    Serial.print(F(" using pin "));
-    Serial.print(pinId);
-    Serial.print(F("."));
-#endif
-
-    // Initialize this mmReader's arduino card pin
-    pinMode(pinId, OUTPUT);
-    digitalWrite(pinId, HIGH);
-
-    // Initialize the RFID reader card
-    bool initGood = mmReader->initializeFirmwareCommunication();
-
-#ifdef DO_DEBUG
-    Serial.print(F(" Firmware init is "));
-    Serial.print(initGood ? F("good.") : F("bad."));
-    Serial.print(F(" Version: 0x"));
-    Serial.print(mmReader->getFirmwareVersionValue(), HEX);
-    Serial.print(mmReader->isExpectedFirmwareVersion() ? F(" [IsExpected] ") : F(" [IsNotExpected] "));
-    mmReader->PCD_DumpVersionToSerial();
-#endif
-    
-  }
-
-#ifdef DO_DEBUG
-  Serial.println("Finished RFID initialization.");
-#endif
-  
-}
 
 void receiveCommEvent() {
   //use eventData.whatever to get what was sent and switch
@@ -852,29 +872,4 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 #endif
   
 }
-
-/**
- * Helper routine to dump a byte array as hex values to Serial.
- */
-void dump_byte_array(byte *buffer, byte bufferSize) {
-  for (byte i=0; i<bufferSize; i++) {
-    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
-    Serial.print(buffer[i], HEX);
-  }
-}
-
-void flashLED (int ledPort, int duration, int numFlashes) {
-  int dur = max(2, duration);
-  for (int i=0; i<numFlashes; i++) {
-    digitalWrite(ledPort,HIGH);
-    delay(dur);
-    digitalWrite(ledPort,LOW);
-    delay(dur/2);
-  }
-}
-
-
-
-
-
 
