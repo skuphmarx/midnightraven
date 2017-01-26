@@ -14,12 +14,12 @@
 // red: 3 Volt
 
 
-#include <SoftwareSerial.h>
+//#include <SoftwareSerial.h>
 
-#include <PJON.h>
-#include <GameCommUtils.h>
+//#include <PJON.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <GameCommUtils.h>
 #include <string.h>
 
 using namespace std;
@@ -27,16 +27,28 @@ using namespace std;
 // Uncomment to enable event communications
 //#define DO_GAME_EVENT_COMM
 
-// Uncomment to enable Serial Debug Prints
+// Logging *******************************************
+
+// Uncomment to enable Info level Serial Prints - this is the minimal logging other than none.
+#define DO_INFO
+
+// Uncommment this to get the logging feedback for playing the game via the Serial port.
+#define DO_PLAY_GAME_LOGGING
+
+// Uncomment to enable Debug level Serial Prints
 #define DO_DEBUG
 
-// Uncomment to enable printing game status details
-#define DO_GAME_STATUS_DETAILS
+// Uncomment to enable Debug level Serial Prints related to RFID
+#define DO_DEBUG_RFID
+
+// Uncomment to enable printing game status update
+//#define DO_GAME_STATUS_UPDATE
+
 
 // Board locations *******************
 
 // PIN for comm
-#define GAME_COMM_PIN 3
+#define GAME_COMM_PIN 4
 
 // RFID reset pin. Configurable but shared by all RFID readers
 #define RST_PIN         10 
@@ -53,7 +65,7 @@ using namespace std;
 // Each pot has 2 tags, one is a backup. Only one of the two tags can be
 // active in any of the pots at game time.
 // The RFID has 4 bytes.
-byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
+static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xC2, 0x66, 0x7F, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 1.1, 1.2
   { {0x54, 0x99, 0xDE, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 2.1, 2.2
   { {0xE6, 0x93, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 3.1, 3.2
@@ -66,14 +78,20 @@ byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xF4, 0x68, 0x9B, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // 10.1, 10.2
 };
 
+// Local functions
+void printBegin(String s);
+void printEnd(String s);
+
 
 /**
  * RFID Tag.
  */
 class RFIDTag {
 
+    const static byte MAX_ID_BYTES = 4;
+
     byte size = 0;
-    byte id[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };  // Size matches MFRC522 Uid struct
+    byte id[MAX_ID_BYTES] = { 0, 0, 0, 0 };  // 4 max
     bool clearFlag = true;
     
   public:
@@ -88,7 +106,7 @@ class RFIDTag {
     }
 
     void clearId() {
-      memset(id, 0, 10);
+      memset(id, 0, MAX_ID_BYTES);
       clearFlag = true;
     }
 
@@ -97,9 +115,13 @@ class RFIDTag {
     }
 
     void setId(byte *uidBytes, byte inSize) {
-      memcpy(id, uidBytes, inSize);
-      size = inSize;
-      clearFlag = false;
+      if (inSize <= MAX_ID_BYTES) {
+        memcpy(id, uidBytes, inSize);
+        size = inSize;
+        clearFlag = false;
+      } else {
+        Serial.println(F("RFIDTag Err 1"));
+      }
     }
 
     bool isEqualId(MFRC522::Uid *uid) {
@@ -130,20 +152,20 @@ class RFIDTag {
  */
 class FlowerPot {
 
-    const static int MAX_TAGS_PER_POT = 2;
+    const static byte MAX_TAGS_PER_POT = 2;
 
     RFIDTag* knownTags[MAX_TAGS_PER_POT];
-    int numberKnownTags = 0;
+    byte numberKnownTags = 0;
 
-    int id;  // ID of the pot; 1-10 or whatever.
+    byte id;  // ID of the pot; 1-10 or whatever.
 
   public:
 
-    FlowerPot( int potId ) {
+    FlowerPot( byte potId ) {
       id = potId;
     }
 
-    int getId() {
+    byte getId() {
       return id;
     }
 
@@ -155,7 +177,7 @@ class FlowerPot {
         knownTags[numberKnownTags] = tag;
         numberKnownTags++;
       } else {
-        Serial.println(F("Error: Maximum tags exceeded in FlowerPot.addKnownTag()"));
+        Serial.println(F("FP Err 1"));
       }
     }
 
@@ -163,7 +185,7 @@ class FlowerPot {
      * Returns true if the input tag is one of the tags that is associated with this pot.
      */
     bool isKnownTag(RFIDTag* tag) {
-      for (int i=0; i<numberKnownTags; i++) {
+      for (uint8_t i=0; i<numberKnownTags; i++) {
         if (*tag == *knownTags[i]) {
           return true;
         }
@@ -181,7 +203,7 @@ class GameRFIDReader: public MFRC522 {
 
     const static byte EXPECTED_FIRMWARE_VERSION = 0x92;
 
-    int pinId;
+    byte pinId;
     byte firmwareVersionValue = 0x00;
 
   public:
@@ -192,13 +214,16 @@ class GameRFIDReader: public MFRC522 {
       pinId = chipSelectPin;
     }
     
-    int getPinId() {
+    byte getPinId() {
       return pinId;
     }
 
     bool isTagDataAvailable()
     {
+      //PICC_IsNewCardPresent();
+      //PICC_ReadCardSerial();
       return PICC_IsNewCardPresent() && PICC_ReadCardSerial();
+    //return false;
     }
 
     /**
@@ -217,7 +242,7 @@ class GameRFIDReader: public MFRC522 {
 
       // Initialize the RFID reader card
       // Retires do not seem to help.
-      for (byte bb=0; bb<1; bb++) {
+      for (uint8_t bb=0; bb<1; bb++) {
         // Maybe help inconsistent startup? Does not seem to help.
         //delay(500);
         
@@ -321,10 +346,10 @@ class MasterMindReader: public GameRFIDReader {
  */
 class MasterMindGameSolution {
 
-    const static int MAX_POTS_PER_SOLUTION = 3;
+    const static uint8_t MAX_POTS_PER_SOLUTION = 3;
 
     FlowerPot* solutionPots[MAX_POTS_PER_SOLUTION];
-    int numberSolutionPots = 0;
+    uint8_t numberSolutionPots = 0;
 
   public:
 
@@ -340,31 +365,15 @@ class MasterMindGameSolution {
         solutionPots[numberSolutionPots] = p;
         numberSolutionPots++;
       } else {
-        Serial.println(F("Error: Maximum flowerpots exceeded in MasterMindGameSolution.addSolutionFlowerPot()"));
+        Serial.println(F("Sol Err1"));
       }
     }
-
-    // Don't yet have a need for these. ******
-    
-    //FlowerPot** getSolutionFlowerPots() {
-    //  return solutionPots;
-    //}
-
-    //int getNumberSolutionPots() {
-    //  return numberSolutionPots;
-    //}
-
-    //FlowerPot* getSolutionFlowerPot(int index) {
-    //  return solutionPots[index];
-    //}
-
-    // *****************************************
 
     /**
      * Returns true if the input tag is part of the solution, false otherwise.
      */
     bool isTagInSolution(RFIDTag* tag) {
-      for (int ip=0; ip<numberSolutionPots; ip++) {
+      for (uint8_t ip=0; ip<numberSolutionPots; ip++) {
         if (solutionPots[ip]->isKnownTag(tag)) {
           return true;      
         }
@@ -379,16 +388,16 @@ class MasterMindGameSolution {
  */
 class MasterMindFlowerPotGame {
 
-    const static int MAX_READERS = 5;
-    const static int MAX_FLOWER_POTS = 12;
-    const static int NUM_GAME_SOLUTIONS = 3;
-    const static int NUM_POTS_PER_SOLUTION = 3;
+    const static uint8_t MAX_READERS = 5;
+    const static uint8_t MAX_FLOWER_POTS = 12;
+    const static uint8_t NUM_GAME_SOLUTIONS = 3;
+    const static uint8_t NUM_POTS_PER_SOLUTION = 3;
 
     MasterMindReader* readers[MAX_READERS];
-    int numReaders = 0;
+    uint8_t numReaders = 0;
 
     FlowerPot* flowerPots[MAX_FLOWER_POTS];
-    int numFlowerPots = 0;
+    uint8_t numFlowerPots = 0;
 
     MasterMindGameSolution* solutions[NUM_GAME_SOLUTIONS];
 
@@ -396,13 +405,13 @@ class MasterMindFlowerPotGame {
     byte numberFlowerPotsOnReaders = 0;
     byte numberCorrectFlowerPots = 0;
 
-    int gameSolutionNumber = 0;
+    uint8_t gameSolutionNumber = 0;
 
     /**
      * Chooses a new random solution from one of the possible solutions and returns the index
      * of the choosen solution.
      */
-    int initRandomSolution() {
+    uint8_t initRandomSolution() {
       if (NUM_GAME_SOLUTIONS > 1) {
         gameSolutionNumber = random(0, NUM_GAME_SOLUTIONS);  // Returns a long value from 0 to NUM_GAME_SOLUTIONS-1
       }
@@ -434,7 +443,7 @@ class MasterMindFlowerPotGame {
       numberFlowerPotsOnReaders = 0;
       numberCorrectFlowerPots = 0;
       
-      for (int reader=0; reader<numReaders; reader++) {
+      for (uint8_t reader=0; reader<numReaders; reader++) {
         MasterMindReader* mmReader = readers[reader];
         mmReader->setTagCorrect(false);
 
@@ -454,7 +463,7 @@ class MasterMindFlowerPotGame {
             numberFlowerPotsOnReaders++;
 
             // Loop over all the pots and set the current pot independent of it being correct or not
-            for (int ipot=0; ipot<numFlowerPots; ipot++) {
+            for (uint8_t ipot=0; ipot<numFlowerPots; ipot++) {
               FlowerPot* flowerPot = flowerPots[ipot];
               if (flowerPot->isKnownTag(mmReader->getCurrentTag())) {
                 mmReader->setCurrentFlowerPot(flowerPot);
@@ -489,7 +498,7 @@ class MasterMindFlowerPotGame {
         readers[numReaders] = r;
         numReaders++;
       } else {
-        Serial.println(F("Error: Maximum readers exceeded in MasterMindFlowerPotGame.addReader()"));
+        Serial.println(F("MM Err 1"));
       }
     }
 
@@ -497,11 +506,11 @@ class MasterMindFlowerPotGame {
       return readers;
     }
 
-    int getNumReaders() {
+    uint8_t getNumReaders() {
       return numReaders;
     }
 
-    MasterMindReader* getReader(int index) {
+    MasterMindReader* getReader(uint8_t index) {
       return readers[index];
     }
 
@@ -510,7 +519,7 @@ class MasterMindFlowerPotGame {
         flowerPots[numFlowerPots] = p;
         numFlowerPots++;
       } else {
-        Serial.println(F("Error: Maximum flowerpots exceeded in MasterMindFlowerPotGame.addFlowerPot()"));
+        Serial.println(F("MM Err 2"));
       }
     }
 
@@ -518,11 +527,11 @@ class MasterMindFlowerPotGame {
       return flowerPots;
     }
 
-    int getNumFlowerPots() {
+    uint8_t getNumFlowerPots() {
       return numFlowerPots;
     }
 
-    FlowerPot* getFlowerPot(int index) {
+    FlowerPot* getFlowerPot(uint8_t index) {
       return flowerPots[index];
     }
 
@@ -531,11 +540,11 @@ class MasterMindFlowerPotGame {
      */
     void initializeGameSolutions() {
        // At some point if needed this can be done more elegantly.
-       int ipot = 0;
-       for (int is=0; is<NUM_GAME_SOLUTIONS; is++) {
+       uint8_t ipot = 0;
+       for (uint8_t is=0; is<NUM_GAME_SOLUTIONS; is++) {
          MasterMindGameSolution* mmSolution = new MasterMindGameSolution();
          solutions[is] = mmSolution;
-         for (int ip=0; ip<NUM_POTS_PER_SOLUTION; ip++) {
+         for (uint8_t ip=0; ip<NUM_POTS_PER_SOLUTION; ip++) {
            mmSolution->addSolutionFlowerPot(flowerPots[ipot]); ipot++;
            if (ipot == numFlowerPots) {
              ipot = 0;
@@ -555,15 +564,15 @@ class MasterMindFlowerPotGame {
       return gameStatusChanged;
     }
 
-    byte getNumberFlowerPotsOnReaders() {
+    uint8_t getNumberFlowerPotsOnReaders() {
       return numberFlowerPotsOnReaders;
     }
 
-    byte getNumberCorrectFlowerPots() {
+    uint8_t getNumberCorrectFlowerPots() {
       return numberCorrectFlowerPots;
     }
 
-    int getGameSolutionNumber() {
+    uint8_t getGameSolutionNumber() {
       return gameSolutionNumber;
     }
 
@@ -592,74 +601,9 @@ class MasterMindFlowerPotGame {
   
 };
 
-/**
- * This class represents the Arduino card, it contains methods that interact with the card.
- */
-class MasterMindArduino {
-
-  MasterMindFlowerPotGame* mmGame;
-
-  public:
-
-    MasterMindArduino(MasterMindFlowerPotGame* game) {
-      mmGame = game;
-    }
-
-    /**
-     * Initializes the RFID readers. Should be called once from setup() after the game has been initialized
-     */
-    void initializeRFID() {
-
-#ifdef DO_DEBUG
-      Serial.println("Begin RFID initialization.");
-#endif
-
-      // Init SPI bus to communicate with RFID cards
-      SPI.begin();
-
-      for (uint8_t reader = 0; reader < mmGame->getNumReaders(); reader++) {
-        MasterMindReader* mmReader = mmGame->getReader(reader);
-        int pinId = mmReader->getPinId();
-
-#ifdef DO_DEBUG
-        Serial.print(F("Reader "));
-        Serial.print(reader+1);
-        Serial.print(F(" using pin "));
-        Serial.print(pinId);
-        Serial.print(F("."));
-#endif
-
-        // Initialize this mmReader's arduino card pin
-        pinMode(pinId, OUTPUT);
-        digitalWrite(pinId, HIGH);
-
-        // Initialize the RFID reader card
-        bool initGood = mmReader->initializeFirmwareCommunication();
-
-#ifdef DO_DEBUG
-        Serial.print(F(" Firmware init is "));
-        Serial.print(initGood ? F("good.") : F("bad."));
-        Serial.print(F(" Version: 0x"));
-        Serial.print(mmReader->getFirmwareVersionValue(), HEX);
-        Serial.print(mmReader->isExpectedFirmwareVersion() ? F(" [IsExpected] ") : F(" [IsNotExpected] "));
-        mmReader->PCD_DumpVersionToSerial();
-#endif
-    
-      }
-
-#ifdef DO_DEBUG
-      Serial.println("Finished RFID initialization.");
-#endif
-  
-    }
-
-};
 
 // This is the main game object
 MasterMindFlowerPotGame* mmGameInstance;
-
-// This is the arduino
-MasterMindArduino* mmArduino;
 
 
 /**
@@ -671,8 +615,8 @@ void setup() {
   Serial.begin(9600); 
   while (!Serial);    // Do nothing if no serial port is opened (added for Arduinos based on ATMEGA32U4)
 
-#ifdef DO_DEBUG
-  Serial.println("Setup started.");
+#ifdef DO_INFO
+  printBegin(F("Setup"));
 #endif
 
   // Initialize random seed value. Using pin 0. It is assumed that this pin is not used.
@@ -683,20 +627,14 @@ void setup() {
   // Initialize mastermind
   mmGameInstance = initializeMastermind();
 
-  // Create the Arduino object
-  mmArduino = new MasterMindArduino(mmGameInstance);
+  // Initialize RFID
+  initializeRFID(mmGameInstance);
 
   // Initialize game event communications
   initializeGameEventComm(); 
-
-  // Initialize RFID
-  mmArduino->initializeRFID();
-
-  // Reset all game data and other state
-  reset(); 
   
-#ifdef DO_DEBUG
-  Serial.println("Setup finished.");
+#ifdef DO_INFO
+  printEnd(F("Setup"));
 #endif
 
 }
@@ -735,22 +673,92 @@ return newGame;
 void initializeGameEventComm() {
 #ifdef DO_GAME_EVENT_COMM
   // Node ID is in GameCommUtil.h
+
+//#ifdef DO_DEBUG
+  printBegin(F("CommNodeInit"));
+  Serial.print(F(" "));
+  Serial.print(MASTER_MIND_POT_GAME_NODE);
+  Serial.print(F(", Pin: "));
+  Serial.println(GAME_COMM_PIN);
+//#endif
+  
   initOverrideComm(MASTER_MIND_POT_GAME_NODE, GAME_COMM_PIN);
   setLocalEventHandler(receiveCommEvent);
   setLocalErrorHandler(errorHandler);
-  Serial.println("Game Event Communications initialized.");
+//#ifdef DO_DEBUG  
+  printEnd(F("CommNodeInit"));
+//#endif
 #endif
+
 #ifndef DO_GAME_EVENT_COMM
-  Serial.println("Game Event Communications Is Disabled.");
+#ifdef DO_DEBUG
+  Serial.println(F("GameComm disabled."));
+#endif
 #endif
 }
 
+ /**
+  * Initializes the RFID readers. Should be called once from setup() after the game has been initialized
+  */
+ void initializeRFID(MasterMindFlowerPotGame* mmGame) {
+
+#ifdef DO_DEBUG_RFID
+  printBegin(F("RFIDinit"));
+#endif
+
+  // Init SPI bus to communicate with RFID cards
+  SPI.begin();
+    
+  for (uint8_t reader = 0; reader < mmGame->getNumReaders(); reader++) {
+    MasterMindReader* mmReader = mmGame->getReader(reader);
+    int pinId = mmReader->getPinId();
+
+#ifdef DO_DEBUG_RFID
+    Serial.print(F("Reader "));
+    Serial.print(reader+1);
+    Serial.print(F(", pin "));
+    Serial.print(pinId);
+#endif
+
+    // Initialize this mmReader's arduino card pin
+    pinMode(pinId, OUTPUT);
+    digitalWrite(pinId, HIGH);
+
+    // Initialize the RFID reader card
+    bool initGood = mmReader->initializeFirmwareCommunication();
+
+#ifdef DO_DEBUG_RFID
+    Serial.print(F(" Firmware init is "));
+    Serial.print(initGood ? F("good.") : F("bad."));
+    Serial.print(F(" V: 0x"));
+    Serial.print(mmReader->getFirmwareVersionValue(), HEX);
+    Serial.print(mmReader->isExpectedFirmwareVersion() ? F(" :) ") : F(" :( "));
+    mmReader->PCD_DumpVersionToSerial();
+#endif
+    
+  }
+
+#ifdef DO_DEBUG_RFID
+  printEnd("RFIDinit");
+#endif
+  
+}
+
+
 
 void receiveCommEvent() {
+
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
     case RESET_EVENT:
       reset();
+      break;
+    case COMM_EVENT_PING:
+      Serial.println(F("Rcv PING. Snd PONG."));
+      sendEventToNode(COMM_TEST_NODE, COMM_EVENT_PONG, "pong");
+      break;
+    case COMM_EVENT_PONG:
+      Serial.println(F("Rcv PONG."));
       break;
     default:
       ;
@@ -761,39 +769,37 @@ void reset() {
   
   //This should reset self plus all connected game nodes (if any).
 #ifdef DO_DEBUG
-   Serial.print(F("Reset FlowerPot Game data: "));
-   Serial.println(eventData.data);
+  printBegin(F("Reset"));
+  Serial.println(eventData.data);
 #endif
 
-   mmGameInstance->reset();
-
-#ifdef DO_DEBUG
-   Serial.print(F("  Game solution number is: "));
-   Serial.println(mmGameInstance->getGameSolutionNumber());
-#endif
-
+  mmGameInstance->reset();
   
 }
 
 //Sample Error Handler
 void errorHandler(uint8_t code, uint8_t data) {
   if(code == CONNECTION_LOST) {
-    Serial.print("Connection with device ID ");
-    Serial.print(data);
-    Serial.println(" is lost.");
+    Serial.println(F("CMErr1"));
+    //Serial.print("MM Connection with device ID ");
+    //Serial.print(data);
+    //Serial.println(" is lost.");
   } else if(code == PACKETS_BUFFER_FULL) {
-    Serial.print("Packet buffer is full, has now a length of ");
-    Serial.println(data, DEC);
-    Serial.println("Possible wrong bus configuration!");
-    Serial.println("higher MAX_PACKETS in PJON.h if necessary.");
+    Serial.println(F("CMErr2"));
+//    Serial.print("MM Packet buffer is full, has now a length of ");
+//    Serial.println(data, DEC);
+//    Serial.println("Possible wrong bus configuration!");
+//    Serial.println("higher MAX_PACKETS in PJON.h if necessary.");
   } else if(code == CONTENT_TOO_LONG) {
-    Serial.print("Content is too long, length: ");
-    Serial.println(data);
+    Serial.println(F("CMErr3"));
+//    Serial.print("MM Content is too long, length: ");
+//    Serial.println(data);
   } else {
-    Serial.print("Unknown error code received: ");
-    Serial.println(code);
-    Serial.print("With data: ");
-    Serial.println(data);
+    Serial.println(F("CMErr4"));
+//    Serial.print("MM Unknown error code received: ");
+//    Serial.println(code);
+//    Serial.print("With data: ");
+//    Serial.println(data);
   }
 }
 
@@ -810,60 +816,66 @@ void loop() {
   // Update the game
   mmGameInstance->updateGameStatus();
 
-#ifdef DO_DEBUG
   if ( mmGameInstance->getGameStatusChanged() || (millis() - mmGameInstance->lastPrintTime) > 5000) {
     printCurrentGameStatus(mmGameInstance);
     mmGameInstance->lastPrintTime = millis();
-  }
+
+#ifdef DO_GAME_EVENT_COMM
+   //sendEventToNode(COMM_TEST_NODE, COMM_EVENT_PING, "ping");
 #endif
-  
+    
+  }
   
 }
+
 
 /**
  * 
  */
 void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 
-  Serial.println(F("**Current game status:"));
-  Serial.print(F("  Number of flower pots: "));
-  Serial.println(mmGame->getNumberFlowerPotsOnReaders());
-
+#ifdef DO_PLAY_GAME_LOGGING
   if (mmGame->isGameSolved()) {
-    Serial.println(F("  We have a WINNER!!!!!"));
+    Serial.print(F("-- "));
+    Serial.println(F("You Win!"));
   } else if (mmGame->isCompletedGuess()) {
-    Serial.print(F("  Your guess has "));
+    Serial.print(F("-- "));
     Serial.print(mmGame->getNumberCorrectFlowerPots());
-    Serial.println(F(" correct flower pots. Try again."));
+    Serial.println(F(" correct. Try again."));
   }
+#endif
 
-#ifdef DO_GAME_STATUS_DETAILS
-  Serial.print(F("  Solution number is "));
-  Serial.println(mmGame->getGameSolutionNumber());
+#ifdef DO_GAME_STATUS_UPDATE
+  Serial.print(F("***:"));
+  Serial.print(F(" #pots: "));
+  Serial.print(mmGame->getNumberFlowerPotsOnReaders());
+
+  Serial.print(F(", Sol# "));
+  Serial.print(mmGame->getGameSolutionNumber());
   
-  Serial.print(F("  Number of correct flower pots: "));
+  Serial.print(F(", #Correct: "));
   Serial.println(mmGame->getNumberCorrectFlowerPots());
 
   for (uint8_t reader = 0; reader < mmGame->getNumReaders(); reader++) {
     MasterMindReader* mmReader = mmGame->getReader(reader);
 
-    Serial.print(F("  Reader "));
+    Serial.print(F(" Rdr "));
     Serial.print(reader);
 
     if (mmReader->isTagPresent()) {
-      Serial.print(F(" has pot [" ));
+      Serial.print(F(": pot# " ));
       Serial.print(mmReader->getCurrentFlowerPot()->getId());
-      Serial.print(F("] "));
+      Serial.print(F(", "));
       mmReader->getCurrentTag()->printIdToSerial();
-      Serial.print(F(" present for (millis): "));
+      Serial.print(F(", millis: "));
       Serial.print(millis() - mmReader->getTimeLastChanged());
       if (mmReader->isTagCorrect()) {
-        Serial.print(F(" Pot is correct :)"));
+        Serial.print(F(", correct."));
       } else {
-        Serial.print(F(" Pot is incorrect :("));
+        Serial.print(F(", incorrect."));
       }
     } else {
-      Serial.print(F(" has no pot. :(" ));
+      Serial.print(F(", no pot." ));
     }
 
     Serial.println();
@@ -872,4 +884,18 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 #endif
   
 }
+
+
+void printBegin(String s) {
+  Serial.print(F("B "));
+  Serial.println(s);
+}
+
+void printEnd(String s) {
+  Serial.print(F("E "));
+  Serial.println(s);
+}
+
+
+
 
