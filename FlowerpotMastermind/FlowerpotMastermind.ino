@@ -24,8 +24,10 @@
 
 using namespace std;
 
+#define CONTROLLER_NODE GAME_CONTROLLER_NODE
+
 // Uncomment to enable event communications
-//#define DO_GAME_EVENT_COMM
+#define DO_GAME_EVENT_COMM
 
 // Logging *******************************************
 
@@ -48,7 +50,7 @@ using namespace std;
 // Board locations *******************
 
 // PIN for comm
-#define GAME_COMM_PIN 4
+#define GAME_COMM_PIN 12
 
 // RFID reset pin. Configurable but shared by all RFID readers
 #define RST_PIN         10 
@@ -755,7 +757,7 @@ void receiveCommEvent() {
       break;
     case COMM_EVENT_PING:
       Serial.println(F("Rcv PING. Snd PONG."));
-      sendEventToNode(COMM_TEST_NODE, COMM_EVENT_PONG, "pong");
+      sendEventToNode(CONTROLLER_NODE, COMM_EVENT_PONG, "pong");
       break;
     case COMM_EVENT_PONG:
       Serial.println(F("Rcv PONG."));
@@ -810,7 +812,13 @@ void loop() {
 
 // Event communications
 #ifdef DO_GAME_EVENT_COMM
+//digitalWrite(7,LOW);
+//digitalWrite(8,LOW);
+//digitalWrite(9,LOW);
   doComm();
+//digitalWrite(7,HIGH);
+//digitalWrite(8,HIGH);
+//digitalWrite(9,HIGH);
 #endif
 
   // Update the game
@@ -821,7 +829,7 @@ void loop() {
     mmGameInstance->lastPrintTime = millis();
 
 #ifdef DO_GAME_EVENT_COMM
-   //sendEventToNode(COMM_TEST_NODE, COMM_EVENT_PING, "ping");
+   //sendEventToNode(CONTROLLER_NODE, COMM_EVENT_PING, "ping");
 #endif
     
   }
