@@ -4,6 +4,11 @@
 
 // PJON 5.2 does not have this properly included.
 #include <SoftwareSerial.h>
+
+// Turn on Asynchronous Acknowledgments at the PJON packet level.
+#define INCLUDE_ASYNC_ACK true
+// Set the number of send attempts in PJON - default in library is 42.
+#define MAX_ATTEMPTS 200
 #include <PJON.h>
 
 using namespace std;
@@ -35,6 +40,9 @@ using namespace std;
 #define RESET_EVENT          COMM_EVENT_RESET_EVENT
 //////////////////////////////////////
 
+
+// This can be changed by a given node as makes sense.
+int commUtilsReceiveTimeout = 2000;
 
 int resetCard[5] = {185,233,104,133,189};  // This is the ID(s) of the reset card
 
@@ -70,45 +78,10 @@ eventDataStruct eventData;     // This will be filled after an event is received
 // PJON object
 PJON<SoftwareBitBang> bus;
 
-//void eventReceivedFromController(uint8_t *payload, uint8_t length, const PacketInfo &packet_info) {
-// PJON 6.2
-void eventReceivedFromControllerOld(uint8_t *payload, uint16_t length, const PacketInfo &packet_info) {
+// Local funtions
+void processSend();
+void processReceive();
 
-  Serial.print(F("EVENT RECEIVED length="));
-  Serial.print(length);
-  Serial.print(F(", SenderID: "));
-  Serial.println(packet_info.sender_id);
-
-// Serial.print(" Content: ");
-//  for(uint8_t i = 0; i < length; i++)
-//    Serial.print((char)payload[i]);
-
-  if (length >= 2) {
-
-    eventData.sentFrom=packet_info.sender_id;
-
-    EventIdbuffer[0] = (char)payload[0];
-    EventIdbuffer[1] = (char)payload[1];
-    eventData.event = atoi(EventIdbuffer);
-
-    if (length <= MAX_EVENT_DATA+2) {
-      for(uint8_t i = 2; i < length; i++)  {
-        EventDataBuffer[i-2] = (char)payload[i];
-      }
-      EventDataBuffer[length-2] = 0;
-      strcpy(eventData.data, EventDataBuffer);
-
-      gameEventOccurred();
-
-
-    } else {
-      Serial.print(F("Err: max event data size exceeded: "));
-      Serial.println(length-2);
-    }
-
-  }
-
-}
 
 void eventReceivedFromController(uint8_t *payload, uint16_t length, const PacketInfo &packet_info) {
 
@@ -141,48 +114,52 @@ void eventReceivedFromController(uint8_t *payload, uint16_t length, const Packet
 
 
   } else {
-    Serial.print(F("--RECV got junk of length: "));
+#ifdef DO_COMM_UTILS_DEBUG
+    Serial.print(F("--RECV junk, length: "));
     Serial.println(length);
+#endif
   }
 }
 
 
 void doComm() {
-  bus.update();
-  bus.receive(1000);
+  processSend();
+  processReceive();
 }
 
 void processSend() {
-  bus.update();
+  uint8_t numToSend = bus.update();
+//#ifdef DO_COMM_UTILS_DEBUG
+//  if (numToSend > 0) {
+//    Serial.print("~~ProcSend: ");
+//    Serial.println(numToSend);
+//  }
+//#endif
 }
 
-/*
- *
- * Send an event to a node
- *
-*/
-void sendEventToNodeOld(int nodeId, int eventId, String gameData) {
-
-      String theData = eventId + gameData;
-
-      const char* toSend =  theData.c_str();
-
-      Serial.print(F("Sending comm data. NodeId: "));
-      Serial.print(nodeId);
-      Serial.print(F(" Length: "));
-      Serial.println(strlen(toSend));
-
-      bus.send(nodeId, toSend, strlen(toSend));
-
+void processReceive() {
+  uint16_t recvState = bus.receive(commUtilsReceiveTimeout);
+//#ifdef DO_COMM_UTILS_DEBUG
+//  if (ACK == recvState) {
+//    Serial.println(F("**ProcRecv: ACK"));
+//  }
+//  else if (NAK == recvState) {
+//    Serial.println(F("**ProcRecv: NAK"));
+//  }
+//#endif
 }
 
+/**
+ * Send an Event to the specified Node.
+ */
 void sendEventToNode(int nodeId, int eventId, String gameData) {
 
-  Serial.print(F("++INPUT: "));
-  Serial.println(gameData);
+#ifdef DO_COMM_UTILS_DEBUG
+//  Serial.print(F("++INPUT: "));
+//  Serial.println(gameData);
+#endif
 
-
-  // First character is the Game Start Character
+  // First character is the Game Comm Packet Start Character
   // Character 2 and 3 are event ID. To make it easy only support event ID values
   // of 10 - 99.
   // Characters 4-20 are data.
@@ -191,14 +168,6 @@ void sendEventToNode(int nodeId, int eventId, String gameData) {
     itoa(eventId, &sendBuffer[1], 10);
     memcpy(&sendBuffer[3], gameData.c_str(), gameData.length());
 
-
-//    String evIdStr = new String(itoa(eventId));
-//    uint8_t dataLen = dataStr.length();
-//    memcpy(&sendBuffer[1], &theData.c_str(), dataLen);
-
-//    String theData = GAME_START_PACKET_CHAR + eventId + gameData;
-//    uint8_t dataLen = theData.length();
-//    strncpy(sendBuffer, theData.c_str(), dataLen);
     int dataLen = gameData.length() + 3;
     if (dataLen < MAX_EVENT_DATA) {
       memcpy(&sendBuffer[dataLen], padBuffer, MAX_EVENT_DATA - dataLen);
@@ -218,6 +187,7 @@ void sendEventToNode(int nodeId, int eventId, String gameData) {
 
     // Always send a full packet - then we know we have always received a full packet.
     bus.send(nodeId, sendBuffer, MAX_EVENT_DATA);
+    processSend();
   }
 }
 
@@ -260,12 +230,11 @@ void setLocalErrorHandler(void (*function)(uint8_t, uint8_t)) {
 
 /**
  * INIT Method
- * Use initCommunications() if you are fine using the default COMM pin which is 12
- * Some shields (like the music maker shield) use PIN 12 for other things in which case that node 
- * should use the initOverrideComm() and pass in the pin that IT wants to use. All nodes do not need
- * to use the same pin fortunately.
+ * Use initCommunications() if you are fine using the default COMM pin which is defined by COMM_PIN.
+ * Some shields (like the music maker shield) may use the default COMM_PIN for other things in which
+ * case that node should use the initOverrideComm() and pass in the pin that it wants to use.
+ * All nodes do not need to use the same pin fortunately.
  */
-
 void initOverrideComm(int nodeAddress, int commAddress) {
 
   // Initialize the pad buffer.
@@ -276,6 +245,14 @@ void initOverrideComm(int nodeAddress, int commAddress) {
   thisNode = nodeAddress;
   bus.set_id(nodeAddress);
   bus.strategy.set_pin(commAddress);
+
+// Set the Async ACK flag
+#if(INCLUDE_ASYNC_ACK)
+  bus.set_asynchronous_acknowledge(true);
+#endif
+
+  //bus.set_synchronous_acknowledge(true);
+
   bus.begin();
   bus.set_receiver(eventReceivedFromController);
   bus.set_error(error_handler);
@@ -285,6 +262,10 @@ void initOverrideComm(int nodeAddress, int commAddress) {
 
 void initCommunications(int nodeAddress) {
   initOverrideComm(nodeAddress, COMM_PIN);
+}
+
+void setCommUtilsReceiveTimeout(int value) {
+  commUtilsReceiveTimeout = value;
 }
 
 
