@@ -26,6 +26,7 @@ using namespace std;
 #define DOOR_KNOCKER 13
 
 // EVENTS - Values from 10-99 Only
+#define COMM_EVENT_START_GAME           10
 #define COMM_EVENT_PING                 50
 #define COMM_EVENT_PONG                 51
 #define COMM_EVENT_PUZZLE_COMPLETED     80
