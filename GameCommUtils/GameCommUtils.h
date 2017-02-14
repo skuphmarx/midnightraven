@@ -29,6 +29,7 @@ using namespace std;
 #define COMM_EVENT_START_GAME           10
 #define COMM_EVENT_PING                 50
 #define COMM_EVENT_PONG                 51
+#define COMM_EVENT_ACK                  55
 #define COMM_EVENT_PUZZLE_COMPLETED     80
 #define COMM_EVENT_PLAY_TRACK           70
 #define COMM_EVENT_KNOCK_OCCURRED       81
@@ -71,6 +72,8 @@ const char GAME_START_PACKET_CHAR = '^';
 char sendBuffer[MAX_EVENT_DATA];
 
 char padBuffer[MAX_EVENT_DATA];
+
+char intDataBuffer[MAX_EVENT_DATA];
 
 int thisNode;
 
@@ -150,6 +153,7 @@ void processReceive() {
 //#endif
 }
 
+
 /**
  * Send an Event to the specified Node.
  */
@@ -189,6 +193,10 @@ void sendEventToNode(int nodeId, int eventId, String gameData) {
     // Always send a full packet - then we know we have always received a full packet.
     bus.send(nodeId, sendBuffer, MAX_EVENT_DATA);
     processSend();
+  } else {
+#ifdef DO_COMM_UTILS_DEBUG
+    Serial.println(F("Bad request in commUtils"));
+#endif
   }
 }
 
@@ -200,6 +208,20 @@ void sendEventToController(int eventId, String gameData) {
   sendEventToNode(GAME_CONTROLLER_NODE,eventId, gameData);
 }
 
+/**
+ * Send an Event where the data is an integer.
+ */
+void sendIntEventToNode(int nodeId, int eventId, int intGameData) {
+  itoa(intGameData, &intDataBuffer[0], 10);
+  sendEventToNode(nodeId, eventId, intDataBuffer);
+}
+
+/**
+ *
+ */
+void respondAckToSender() {
+  sendIntEventToNode(eventData.sentFrom, COMM_EVENT_ACK, eventData.event);
+}
 
 /**
  * PACKETS_BUFFER_FULL - Possible wrong bus configuration. Higher MAX_PACKETS in PJON.h if necessary.
