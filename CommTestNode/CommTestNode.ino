@@ -2,30 +2,30 @@
  * Sketch to test GameCommUtils communication with another game node.
  */
 
-//#include <SoftwareSerial.h>
-//#include <PJON.h>
 #include <GameCommUtils.h>
-
-// Which Node is this App Mimicing
-#define COMM_TEST_NODE GAME_CONTROLLER_NODE
 
 // PIN for comm
 #define COMM_PIN_NUMBER 12
 //#define COMM_PIN_NUMBER 4
 
+// Which Node is this App Mimicing
+#define COMM_TEST_NODE GAME_CONTROLLER_NODE
+
 // Which node are we communicating with
 int targetGameNode = MASTER_MIND_POT_GAME_NODE;
 
+// Ping/Pong Heartbeat ******************
+#define HEARTBEAT_RATE_MILLIS 10000
+
+long lastHeartbeatPing = 0;
 int pingSendCount = 0;
 String PING_STR = "Ping ";
+bool shouldSendHeartbeat = false;
 
-// Local method declarations
-void dump_byte_array(byte *buffer, byte bufferSize);
-
+// **************************************
 
 String inSerialMsg = "";
 
-long lastHeartbeatPing = 0;
 
 
 void setup() {
@@ -53,9 +53,9 @@ void loop() {
 
   processInputCommand();
 
-  sendHeartbeatPing();
-
-  processSend();
+  if (shouldSendHeartbeat) {
+    sendHeartbeatPing();
+  }
 
 }
 
@@ -65,6 +65,8 @@ void initializeGameEventComm() {
   Serial.print(COMM_TEST_NODE);
   Serial.print(F(", Using Pin: "));
   Serial.println(COMM_PIN_NUMBER);
+
+  //setCommUtilsReceiveTimeout(3000);
   
   initOverrideComm(COMM_TEST_NODE, COMM_PIN_NUMBER);
   
@@ -77,7 +79,7 @@ void initializeGameEventComm() {
 void receiveCommEvent() {
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
-    case RESET_EVENT:
+    case COMM_EVENT_RESET_EVENT:
       Serial.print(F("Received RESET event."));
       break;
     case COMM_EVENT_PONG:
@@ -88,6 +90,19 @@ void receiveCommEvent() {
       Serial.println(eventData.data);
       sendEventToNode(targetGameNode, COMM_EVENT_PONG, "pong");
       Serial.print(F("Send PONG event."));
+      break;
+    case COMM_EVENT_PLAY_TRACK:
+      Serial.print(F("Received Play Audio Track event: "));
+      Serial.print(eventData.data);
+      respondAckToSender();
+      break;
+    case COMM_EVENT_PUZZLE_COMPLETED:
+      Serial.print(F("Received puzzle complete event: "));
+      Serial.print(eventData.data);
+      respondAckToSender();
+      break;
+    case COMM_EVENT_ACK:
+      Serial.print(F("Received ACK."));
       break;
     default:
       Serial.print(F("Received something unknown at this point."));
@@ -139,10 +154,17 @@ void processInputCommand() {
     
     if (inSerialMsg.equals("help")) {
       doHelp();
-    } else if (inSerialMsg.startsWith("send")) {
-      doSendComm();
+    } else if (inSerialMsg.startsWith("ping")) {
+      shouldSendHeartbeat = shouldSendHeartbeat ? false : true;
+      Serial.print(F("Pinging is now "));
+      Serial.println(shouldSendHeartbeat ? F("on") : F("off"));
+    } else if (inSerialMsg.startsWith("start")) {
+      doSendStart();
+    } else if (inSerialMsg.startsWith("reset")) {
+      doSendReset();
     } else {
-      Serial.println("Unrecognized command: " + inSerialMsg);
+      Serial.print(F("Unrecognized command: "));
+      Serial.println(inSerialMsg);
     }
      inSerialMsg = "";
   
@@ -154,21 +176,25 @@ void processInputCommand() {
 void doHelp() {
 
    Serial.println(F("You can send the following commands:"));
-   Serial.println(F("  help - Get this help."));
-   Serial.println(F("  send xxxxx - Send the string xxxxx to the comm channel."));
+   Serial.println(F("  help -  Get this help."));
+   Serial.println(F("  ping -  Toggle ping sends on or off."));
+   Serial.println(F("  start - Send a start event to the node."));
+   Serial.println(F("  reset - Send a reset event to the node."));
    
 }
 
-void doSendComm() {
+void doSendStart() {
+  Serial.println(F("Sending start."));
+  sendEventToNode(targetGameNode, COMM_EVENT_START_GAME, "");
+}
 
-  Serial.println("Got a send command: " + inSerialMsg);
-
-  sendEventToNode(targetGameNode, COMM_EVENT_PING, "ping");
-
+void doSendReset() {
+  Serial.println(F("Sending start."));
+  sendEventToNode(targetGameNode, COMM_EVENT_RESET_EVENT, "");
 }
 
 void sendHeartbeatPing() {
-  if ((millis() - lastHeartbeatPing) > 1500) {
+  if ((millis() - lastHeartbeatPing) > HEARTBEAT_RATE_MILLIS) {
     pingSendCount++;
     Serial.print(F("Sending ping "));
     Serial.println(pingSendCount);
@@ -177,18 +203,5 @@ void sendHeartbeatPing() {
     lastHeartbeatPing = millis(); 
   }
 }
-
-
-/**
- * Helper routine to dump a byte array as hex values to Serial.
- */
-void dump_byte_array(byte *buffer, byte bufferSize) {
-  for (byte i=0; i<bufferSize; i++) {
-    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
-    Serial.print(buffer[i], HEX);
-  }
-}
-
-
 
 

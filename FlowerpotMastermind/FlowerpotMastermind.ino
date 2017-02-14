@@ -5,13 +5,20 @@
 // Wires to RFID Readers, right to left: red, brown, black, blue, orange/purple, yellow, green/white. Last pin is empty.
 
 // Wire to arduino:
-// yellow: 13
-// blue:   12
-// orange/purple: 11
-// brown:  10
+// yellow: 13                         SCK
+// blue:   12                         MISO
+// orange/purple: 11                  MOSI
+// brown:  10                         RESET
 // Greens/white: 7, 8, 9
-// Black: GND 1 opposite side
-// red: 3 Volt
+// Black: GND 1 opposite side         GND 
+// red: 3 Volt                        VCC
+
+// ICSP Pins
+//
+// MISO    VCC
+// SCK     MOSI
+// RESET   GND
+//
 
 
 //#include <SoftwareSerial.h>
@@ -24,7 +31,9 @@
 
 using namespace std;
 
+// Which nodes do we communicate to. 
 #define CONTROLLER_NODE GAME_CONTROLLER_NODE
+#define AUDIO_NODE      GAME_CONTROLLER_NODE
 
 // Uncomment to enable event communications
 #define DO_GAME_EVENT_COMM
@@ -38,13 +47,16 @@ using namespace std;
 #define DO_PLAY_GAME_LOGGING
 
 // Uncomment to enable Debug level Serial Prints
-#define DO_DEBUG
+//#define DO_DEBUG
 
 // Uncomment to enable Debug level Serial Prints related to RFID
 #define DO_DEBUG_RFID
 
 // Uncomment to enable printing game status update
 //#define DO_GAME_STATUS_UPDATE
+
+// Uncomment to enable Debug level Serial Prints related to CommUtils
+#define DO_DEBUG_GAME_COMM
 
 
 // Board locations *******************
@@ -63,12 +75,15 @@ using namespace std;
 // This is the number of flower pots that are known to the logic
 #define NUM_KNOWN_FLOWER_POTS 10
 
+// Comment this if the game requires a start event to be active 
+//#define GAME_START_EVENT_NOT_REQUIRED
+
 // Active Flower Pots that can be part of a solution.
 // Each pot has 2 tags, one is a backup. Only one of the two tags can be
 // active in any of the pots at game time.
 // The RFID has 4 bytes.
 static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
-  { {0xC2, 0x66, 0x7F, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 1.1, 1.2
+  { {0xC2, 0x66, 0x7F, 0x64}, {0x2B, 0xEE, 0xFD, 0xC4} },   // 1.1, 1.2
   { {0x54, 0x99, 0xDE, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 2.1, 2.2
   { {0xE6, 0x93, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 3.1, 3.2
   { {0xD4, 0x5E, 0x15, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 4.1, 4.2
@@ -80,9 +95,19 @@ static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xF4, 0x68, 0x9B, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // 10.1, 10.2
 };
 
+// Audio Tracks
+#define BASE_AUDIO_TRACK_ID              0
+#define AUDIO_ZERO_CORRECT_GUESS         BASE_AUDIO_TRACK_ID
+#define AUDIO_ONE_CORRECT_GUESS          BASE_AUDIO_TRACK_ID + 1
+#define AUDIO_TWO_CORRECT_GUESS          BASE_AUDIO_TRACK_ID + 2
+#define AUDIO_ALL_CORRECT_GUESS          BASE_AUDIO_TRACK_ID + 3
+#define AUDIO_NO_ACTION                  BASE_AUDIO_TRACK_ID + 4
+
 // Local functions
 void printBegin(String s);
 void printEnd(String s);
+void processReceivedStartGame();
+void processSendEvents();
 
 
 /**
@@ -403,11 +428,19 @@ class MasterMindFlowerPotGame {
 
     MasterMindGameSolution* solutions[NUM_GAME_SOLUTIONS];
 
+    bool gameIsStarted = false;
+    
     bool gameStatusChanged = false;
     byte numberFlowerPotsOnReaders = 0;
     byte numberCorrectFlowerPots = 0;
 
     uint8_t gameSolutionNumber = 0;
+
+    long gameStartTimeMillis = 0;
+    long firstPotTimeMillis = 0;
+    long firstGuessTimeMillis = 0;
+    long mostRecentGuessTimeMillis = 0;
+    long solutionFoundTimeMillis = 0;
 
     /**
      * Chooses a new random solution from one of the possible solutions and returns the index
@@ -485,6 +518,44 @@ class MasterMindFlowerPotGame {
 
     }
 
+    void processStatisticsUpdate() {
+      unsigned long now = millis();
+
+      // Is this the first flower pot in this game
+      if ((firstPotTimeMillis == 0) && (numberFlowerPotsOnReaders > 0)) {
+        firstPotTimeMillis = now;
+
+Serial.print("SET firstPotTimeMillis ");
+Serial.println(firstPotTimeMillis);
+        
+      }
+
+      // Is the first guess
+      if ((firstGuessTimeMillis == 0) && isCompletedGuess()) {
+        firstGuessTimeMillis = now;
+
+Serial.print("SET firstGuessTimeMillis ");
+Serial.println(firstGuessTimeMillis);
+      }
+
+      // Most recent guess
+//      if (isCompletedGuess()) {
+//        mostRecentGuessTimeMillis = now;
+
+//Serial.print("SET mostRecentGuessTimeMillis ");
+//Serial.println(mostRecentGuessTimeMillis);
+//      }
+
+      // Is this a winner
+      if ((solutionFoundTimeMillis == 0) && isGameSolved()) {
+        solutionFoundTimeMillis = now;
+
+Serial.print("SET solutionFoundTimeMillis ");
+Serial.println(solutionFoundTimeMillis);
+      }
+      
+    }
+
 
   public:
 
@@ -559,11 +630,32 @@ class MasterMindFlowerPotGame {
       gameStatusChanged = false;
       numberFlowerPotsOnReaders = 0;
       numberCorrectFlowerPots = 0;
+      gameStartTimeMillis = 0;
+      firstPotTimeMillis = 0;
+      firstGuessTimeMillis = 0;
+      mostRecentGuessTimeMillis = 0;
+      solutionFoundTimeMillis = 0;
       initRandomSolution();
+    }
+
+    void processStartGame() {
+      if (!isGameStarted()) {
+        reset();
+        setGameStartTime();
+        setGameStarted(true);
+      }
     }
 
     bool getGameStatusChanged() {
       return gameStatusChanged;
+    }
+
+    bool isGameStarted() {
+      return gameIsStarted;
+    }
+
+    void setGameStarted(bool val) {
+      gameIsStarted = val;
     }
 
     uint8_t getNumberFlowerPotsOnReaders() {
@@ -597,9 +689,37 @@ class MasterMindFlowerPotGame {
 
       // Update to current state
       processReaderCurrentStatus();
+
+      // Update Statistics
+      if (gameStatusChanged) {
+        processStatisticsUpdate();
+      }
        
     }
 
+    void setGameStartTime() {
+      gameStartTimeMillis = millis();
+    }
+
+    long getGameStartTimeMillis() {
+      return gameStartTimeMillis;
+    }
+
+    long getFirstPotTimeMillis() {
+      return firstPotTimeMillis;
+    }
+
+    long getFirstGuessTimeMillis() {
+      return firstGuessTimeMillis;
+    }
+
+    long getMostRecentGuessTimeMillis() {
+      return mostRecentGuessTimeMillis;
+    }
+
+    long getSolutionFoundTimeMillis() {
+      return solutionFoundTimeMillis;
+    }
   
 };
 
@@ -633,7 +753,11 @@ void setup() {
   initializeRFID(mmGameInstance);
 
   // Initialize game event communications
-  initializeGameEventComm(); 
+  initializeGameEventComm();
+
+#ifdef GAME_START_EVENT_NOT_REQUIRED
+  mmGameInstance->processStartGame();
+#endif
   
 #ifdef DO_INFO
   printEnd(F("Setup"));
@@ -683,6 +807,8 @@ void initializeGameEventComm() {
   Serial.print(F(", Pin: "));
   Serial.println(GAME_COMM_PIN);
 //#endif
+
+  //setCommUtilsReceiveTimeout(2000);
   
   initOverrideComm(MASTER_MIND_POT_GAME_NODE, GAME_COMM_PIN);
   setLocalEventHandler(receiveCommEvent);
@@ -752,31 +878,38 @@ void receiveCommEvent() {
 
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
-    case RESET_EVENT:
+    case COMM_EVENT_RESET_EVENT:
       reset();
+      respondAckToSender();
+      break;
+    case COMM_EVENT_START_GAME:
+      processReceivedStartGame();
+      respondAckToSender();
       break;
     case COMM_EVENT_PING:
-      Serial.println(F("Rcv PING. Snd PONG."));
+#ifdef DO_DEBUG_GAME_COMM    
+      Serial.print(F("Rcv PING: ["));
+      Serial.print(eventData.data);
+      Serial.println(F("]"));
+#endif
       sendEventToNode(CONTROLLER_NODE, COMM_EVENT_PONG, "pong");
       break;
-    case COMM_EVENT_PONG:
-      Serial.println(F("Rcv PONG."));
-      break;
+    case COMM_EVENT_ACK:
+      Serial.print(F("Rcv ACK. ["));
+      Serial.print(eventData.data);
+      Serial.println(F("]"));
+     break;
     default:
       ;
   }
 }
 
 void reset() {
-  
-  //This should reset self plus all connected game nodes (if any).
-#ifdef DO_DEBUG
-  printBegin(F("Reset"));
-  Serial.println(eventData.data);
-#endif
+  mmGameInstance->reset();  
+}
 
-  mmGameInstance->reset();
-  
+void processReceivedStartGame() {
+  mmGameInstance->processStartGame();
 }
 
 //Sample Error Handler
@@ -812,30 +945,29 @@ void loop() {
 
 // Event communications
 #ifdef DO_GAME_EVENT_COMM
-//digitalWrite(7,LOW);
-//digitalWrite(8,LOW);
-//digitalWrite(9,LOW);
   doComm();
-//digitalWrite(7,HIGH);
-//digitalWrite(8,HIGH);
-//digitalWrite(9,HIGH);
 #endif
 
   // Update the game
-  mmGameInstance->updateGameStatus();
-
-  if ( mmGameInstance->getGameStatusChanged() || (millis() - mmGameInstance->lastPrintTime) > 5000) {
-    printCurrentGameStatus(mmGameInstance);
-    mmGameInstance->lastPrintTime = millis();
-
-#ifdef DO_GAME_EVENT_COMM
-   //sendEventToNode(CONTROLLER_NODE, COMM_EVENT_PING, "ping");
-#endif
-    
-  }
+  processGameLoopIteration();
   
 }
 
+/**
+ * Main loop processing of the game.
+ */
+void processGameLoopIteration() {
+  if (mmGameInstance->isGameStarted()) {
+    mmGameInstance->updateGameStatus();
+    processSendEvents(mmGameInstance);
+    
+    if (mmGameInstance->getGameStatusChanged() || (millis() - mmGameInstance->lastPrintTime) > 15000) {
+      printCurrentGameStatus(mmGameInstance);
+      mmGameInstance->lastPrintTime = millis();
+    }
+
+  }
+}
 
 /**
  * 
@@ -845,7 +977,8 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 #ifdef DO_PLAY_GAME_LOGGING
   if (mmGame->isGameSolved()) {
     Serial.print(F("-- "));
-    Serial.println(F("You Win!"));
+    Serial.print(F("You Win! Duration(ms): "));
+    Serial.println(mmGame->getSolutionFoundTimeMillis() - mmGame->getFirstPotTimeMillis());
   } else if (mmGame->isCompletedGuess()) {
     Serial.print(F("-- "));
     Serial.print(mmGame->getNumberCorrectFlowerPots());
@@ -891,6 +1024,32 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
   }
 #endif
   
+}
+
+void processSendEvents(MasterMindFlowerPotGame* mmGame) {
+
+  if (mmGame->getGameStatusChanged()) {
+    if (mmGame->isGameSolved()) {
+      sendAudioEvent(AUDIO_ALL_CORRECT_GUESS);
+    } else if (mmGame->isCompletedGuess()) {
+      if (mmGame->getNumberCorrectFlowerPots() == 0) {
+        sendAudioEvent(AUDIO_ZERO_CORRECT_GUESS);
+      } else if (mmGame->getNumberCorrectFlowerPots() == 1) {
+        sendAudioEvent(AUDIO_ONE_CORRECT_GUESS);
+      } else if (mmGame->getNumberCorrectFlowerPots() == 2) {
+        sendAudioEvent(AUDIO_TWO_CORRECT_GUESS);
+      }
+    }
+  }  
+  
+}
+
+void sendAudioEvent(int audioId) {
+#ifdef DO_DEBUG_GAME_COMM    
+  Serial.print(F("Send Audio: "));
+  Serial.println(audioId);
+#endif  
+  sendIntEventToNode(AUDIO_NODE, COMM_EVENT_PLAY_TRACK, audioId);
 }
 
 
