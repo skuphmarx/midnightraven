@@ -237,7 +237,7 @@ void sendIntEventToNode(int nodeId, int eventId, int intGameData) {
  *
  */
 void respondAckToSender() {
-  sendIntEventToNode(eventData.sentFrom, COMM_EVENT_ACK, eventData.event);
+  sendIntEventToNode(eventData.sentFrom, CE_ACK, eventData.event);
 }
 
 /**
