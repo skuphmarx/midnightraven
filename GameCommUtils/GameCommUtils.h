@@ -18,28 +18,45 @@ using namespace std;
 
 #define COMM_PIN 3
 
-#define GAME_CONTROLLER_NODE 10         // This is the node controlling what is going on
-#define MP3_PLAYER_NODE 11              // This is the old man talking
-#define FISH_SORTING_GAME_NODE 20       // Fish On Posts
-#define MASTER_MIND_POT_GAME_NODE 22    // FlowerPot Game
+// The various game nodes connected together
+#define GAME_CONTROLLER_NODE      10       // This is the node controlling what is going on
+#define MP3_PLAYER_NODE           20       // This is the old man talking
+#define DOOR_KNOCKER_NODE         30       // Front door knocker to wake the old man
+#define MASTER_MIND_POT_GAME_NODE 40       // FlowerPot Game
+#define FISH_SORTING_GAME_NODE    50       // Fish On Posts
+#define DOCK_PLANKS_GAME_NODE     60       // Dock planks
+#define LICENSE_PLATE_GAME_NODE   70	   // License plate game. Duh.
+#define HELP_RADIO_NODE           80       // The help radio system. 
 
-#define DOOR_KNOCKER 13
 
-// EVENTS - Values from 10-99 Only
-#define COMM_EVENT_START_GAME           10
-#define COMM_EVENT_PING                 50
-#define COMM_EVENT_PONG                 51
-#define COMM_EVENT_ACK                  55
-#define COMM_EVENT_PUZZLE_COMPLETED     80
-#define COMM_EVENT_PLAY_TRACK           70
-#define COMM_EVENT_KNOCK_OCCURRED       81
-#define COMM_EVENT_RESET_EVENT          99
+// COMM_EVENTS (CE) - Values from 10-99 Only
+// Events < 50 are typically sent form the CONTROLLER to the PUZZLE. Add 50 to the event to get the event that goes in the opposite direction
+// Events > 50 are typically sent from a PUZZLE to the CONTROLLER  
+#define CE_START_PUZZLE          10
+#define CE_PUZZLE_START_SUCCESS  60      // Event passed from PUZZLE to Game Master
+
+#define CE_RESET_PUZZLE			 11
+#define CE_PUZZLE_RESET_SUCCESS  61      // Event passed from PUZZLE to Game Master
+
+#define CE_REQUEST_PUZZLE_STATUS 20
+#define CE_PUZZLE_NOT_STARTED    70
+#define CE_PUZZLE_IN_PROGRESS    71
+#define CE_PUZZLE_COMPLETED      72
+
+// Health related events
+#define CE_PING                 50
+#define CE_PONG                 51
+#define CE_ACK                  55
+
+// Common events that the CONTROLLER will receive from other games.
+#define CE_PLAY_TRACK           80     // DATA: The Track NUMBER to play
+
 
 // Keeping these for backward compatibility until code is updated
-#define PUZZLE_COMPLETED     COMM_EVENT_PUZZLE_COMPLETED
-#define PLAY_TRACK           COMM_EVENT_PLAY_TRACK
-#define KNOCK_OCCURRED       COMM_EVENT_KNOCK_OCCURRED
-#define RESET_EVENT          COMM_EVENT_RESET_EVENT
+#define PUZZLE_COMPLETED     CE_PUZZLE_COMPLETED
+#define PLAY_TRACK           CE_PLAY_TRACK
+#define KNOCK_OCCURRED       CE_KNOCK_OCCURRED
+#define RESET_EVENT          CE_RESET_EVENT
 //////////////////////////////////////
 
 
