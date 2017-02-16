@@ -38,6 +38,9 @@ using namespace std;
 #define CE_RESET_PUZZLE			 11
 #define CE_PUZZLE_RESET_SUCCESS  61      // Event passed from PUZZLE to Game Master
 
+#define CE_RESET_AND_START_PUZZLE  12
+#define CE_RESET_AND_START_SUCCESS 62
+
 #define CE_REQUEST_PUZZLE_STATUS 20
 #define CE_PUZZLE_NOT_STARTED    70
 #define CE_PUZZLE_IN_PROGRESS    71
@@ -53,10 +56,10 @@ using namespace std;
 
 
 // Keeping these for backward compatibility until code is updated
-#define PUZZLE_COMPLETED     CE_PUZZLE_COMPLETED
-#define PLAY_TRACK           CE_PLAY_TRACK
-#define KNOCK_OCCURRED       CE_KNOCK_OCCURRED
-#define RESET_EVENT          CE_RESET_EVENT
+//#define PUZZLE_COMPLETED     CE_PUZZLE_COMPLETED
+//#define PLAY_TRACK           CE_PLAY_TRACK
+//#define KNOCK_OCCURRED       CE_KNOCK_OCCURRED
+//#define RESET_EVENT          CE_RESET_EVENT
 //////////////////////////////////////
 
 
