@@ -79,29 +79,29 @@ void initializeGameEventComm() {
 void receiveCommEvent() {
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
-    case COMM_EVENT_RESET_EVENT:
+    case CE_RESET_PUZZLE:
       Serial.print(F("Received RESET event."));
       break;
-    case COMM_EVENT_PONG:
+    case CE_PONG:
       Serial.print(F("Received PONG event."));
       break;
-    case COMM_EVENT_PING:
+    case CE_PING:
       Serial.print(F("Received PING event: "));
       Serial.println(eventData.data);
-      sendEventToNode(targetGameNode, COMM_EVENT_PONG, "pong");
+      sendEventToNode(targetGameNode, CE_PONG, "pong");
       Serial.print(F("Send PONG event."));
       break;
-    case COMM_EVENT_PLAY_TRACK:
+    case CE_PLAY_TRACK:
       Serial.print(F("Received Play Audio Track event: "));
       Serial.print(eventData.data);
       respondAckToSender();
       break;
-    case COMM_EVENT_PUZZLE_COMPLETED:
+    case CE_PUZZLE_COMPLETED:
       Serial.print(F("Received puzzle complete event: "));
       Serial.print(eventData.data);
       respondAckToSender();
       break;
-    case COMM_EVENT_ACK:
+    case CE_ACK:
       Serial.print(F("Received ACK."));
       break;
     default:
@@ -185,12 +185,12 @@ void doHelp() {
 
 void doSendStart() {
   Serial.println(F("Sending start."));
-  sendEventToNode(targetGameNode, COMM_EVENT_START_GAME, "");
+  sendEventToNode(targetGameNode, CE_START_PUZZLE, "");
 }
 
 void doSendReset() {
   Serial.println(F("Sending start."));
-  sendEventToNode(targetGameNode, COMM_EVENT_RESET_EVENT, "");
+  sendEventToNode(targetGameNode, CE_RESET_PUZZLE, "");
 }
 
 void sendHeartbeatPing() {
@@ -199,7 +199,7 @@ void sendHeartbeatPing() {
     Serial.print(F("Sending ping "));
     Serial.println(pingSendCount);
     String s = PING_STR + pingSendCount;
-    sendEventToNode(targetGameNode, COMM_EVENT_PING, s);
+    sendEventToNode(targetGameNode, CE_PING, s);
     lastHeartbeatPing = millis(); 
   }
 }
