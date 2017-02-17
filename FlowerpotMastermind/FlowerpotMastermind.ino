@@ -878,23 +878,23 @@ void receiveCommEvent() {
 
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
-    case COMM_EVENT_RESET_EVENT:
+    case CE_RESET_PUZZLE:
       reset();
       respondAckToSender();
       break;
-    case COMM_EVENT_START_GAME:
+    case CE_START_PUZZLE:
       processReceivedStartGame();
       respondAckToSender();
       break;
-    case COMM_EVENT_PING:
+    case CE_PING:
 #ifdef DO_DEBUG_GAME_COMM    
       Serial.print(F("Rcv PING: ["));
       Serial.print(eventData.data);
       Serial.println(F("]"));
 #endif
-      sendEventToNode(CONTROLLER_NODE, COMM_EVENT_PONG, "pong");
+      sendEventToNode(CONTROLLER_NODE, CE_PONG, "pong");
       break;
-    case COMM_EVENT_ACK:
+    case CE_ACK:
       Serial.print(F("Rcv ACK. ["));
       Serial.print(eventData.data);
       Serial.println(F("]"));
@@ -1049,7 +1049,7 @@ void sendAudioEvent(int audioId) {
   Serial.print(F("Send Audio: "));
   Serial.println(audioId);
 #endif  
-  sendIntEventToNode(AUDIO_NODE, COMM_EVENT_PLAY_TRACK, audioId);
+  sendIntEventToNode(AUDIO_NODE, CE_PLAY_TRACK, audioId);
 }
 
 
