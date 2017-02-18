@@ -81,20 +81,24 @@ void initializeGameEventComm() {
 void receiveCommEvent() {
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
-    case RESET_EVENT:
+    case CE_RESET_NODE:
       Serial.print(F("**Received RESET event."));
       break;
-    case COMM_EVENT_PONG:
+    case CE_PONG:
       Serial.print(F("++Received PONG event."));
       break;
-    case COMM_EVENT_PING:
+    case CE_PING:
       Serial.print(F("--Received PING event: Length: "));
       Serial.print(strlen(eventData.data));
       Serial.print(F(", Data: ["));
       Serial.print(eventData.data);
       Serial.println(F("]"));
-      sendEventToNode(targetNode, COMM_EVENT_PONG, "pong");
+      sendEventToNode(targetNode, CE_PONG, "pong");
       //Serial.print(F("--Send PONG event."));
+      break;
+      case CE_PLAY_TRACK:
+        Serial.println("GOT PLAY TRACK EVENT");
+        Serial.println(eventData.data);
       break;
     default:
       Serial.print(F("??Received something unknown at this point."));
@@ -130,8 +134,11 @@ void errorHandler(uint8_t code, uint8_t data) {
    bool looping = true;
    while (looping) {
      looping = false;
-     while (Serial.available() > 0) {
-       inSerialMsg += (char) Serial.read();
+      while (Serial.available() > 0) {
+       char c = (char)Serial.read();
+       if(c != '\n' && c != '\r') {    
+         inSerialMsg += c;
+       }
        looping = true;
      }
      if (looping) {
@@ -170,7 +177,7 @@ void doSendComm() {
 
   Serial.println("Got a send command: " + inSerialMsg);
 
-  sendEventToNode(targetNode, COMM_EVENT_PING, "ping");
+  sendEventToNode(targetNode, CE_PING, "ping");
 
 }
 
@@ -180,7 +187,7 @@ void sendHeartbeatPing() {
     Serial.print(F("++Sending ping "));
     Serial.println(pingSendCount);
     String s = PING_STR + pingSendCount;
-    sendEventToNode(targetNode, COMM_EVENT_PING, s);
+    sendEventToNode(targetNode, CE_PING, s);
     lastHeartbeatPing = millis(); 
   }
 }
