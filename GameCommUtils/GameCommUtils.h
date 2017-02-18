@@ -35,8 +35,8 @@ using namespace std;
 #define CE_START_PUZZLE          10
 #define CE_PUZZLE_START_SUCCESS  60      // Event passed from PUZZLE to Game Master
 
-#define CE_RESET_PUZZLE			 11
-#define CE_PUZZLE_RESET_SUCCESS  61      // Event passed from PUZZLE to Game Master
+#define CE_RESET_NODE			 11
+#define CE_NODE_RESET_SUCCESS    61      // Event passed from PUZZLE to Game Master
 
 #define CE_RESET_AND_START_PUZZLE  12
 #define CE_RESET_AND_START_SUCCESS 62

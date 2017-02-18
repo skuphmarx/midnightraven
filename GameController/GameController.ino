@@ -51,8 +51,10 @@ unsigned long delayBetweenSameCardRead = 10000;  // 10 seconds
 
 #define debugOn 1
 
+#define LOCAL_COMM_PIN A0 // Override the default (3) which doesn't seem to work. 
+
 void setup() {
-     initCommunications(GAME_CONTROLLER_NODE);
+     initOverrideComm(GAME_CONTROLLER_NODE,LOCAL_COMM_PIN);
       
       Serial.begin(9600);  
       setLocalEventHandler(localGameEventOccurred);
@@ -63,26 +65,41 @@ void setup() {
 
       resetControllerNode();
 
+
       Serial.println("NODE READY");
 }
 
 void resetControllerNode() {
      Serial.println("Restting Game Controller");
 
-    lastTimeRead = 0;
-    resetAllNodes();
+    playTrack("reset10");
+   // resetAllNodes();
 }
 
  void localGameEventOccurred() {
       debug("GOT GAME EVENT");
-        if(eventData.event == CE_RESET_PUZZLE ) {
-           resetControllerNode();
-        } 
+      switch(eventData.event) {
+        case CE_RESET_NODE:
+          resetControllerNode();
+        break;
+        case CE_PONG:
+             Serial.print(F("++Received PONG event."));
+        break;
+        case CE_PING:
+            Serial.print(F("--Received PING event: Length: "));
+            Serial.print(strlen(eventData.data));
+            Serial.print(F(", Data: ["));
+            Serial.print(eventData.data);
+            Serial.println(F("]"));
+            sendEventToNode(eventData.sentFrom, CE_PONG, "pong");
+        break;
+      }
+ 
     }
 //
 // Tell all the nodes to reset
 void resetAllNodes() {
-   performSend(0, CE_RESET_PUZZLE,"");  //PJON_BROADCAST=0 but for some reason not defined here
+   performSend(0, CE_RESET_NODE,"");  //PJON_BROADCAST=0 but for some reason not defined here
  }
 
 void loop() {
@@ -97,11 +114,11 @@ void loop() {
 void checkForTag() {
    if(tagPresent()) {
     if(isDesiredTag(RESET_GAME)) {
-      resetAllNodes();
+      resetControllerNode();
     } else if(isDesiredTag(START_GAME)) {
      // What do we need to do to start here?
     } else if(isDesiredTag(RESET_DOOR_KNOCKER_NODE)) {
-       performSend(DOOR_KNOCKER_NODE,CE_RESET_PUZZLE,"");
+       performSend(DOOR_KNOCKER_NODE,CE_RESET_NODE,"");
     } else if(isDesiredTag(RESET_AND_START_DOOR_KNOCKER_NODE)) {
        performSend(DOOR_KNOCKER_NODE,CE_RESET_AND_START_PUZZLE,"");
     }
@@ -197,6 +214,21 @@ void performSend(int node, int event, String data) {
     sendEventToNode(node,event,data);
   }
 }
+
+/***************
+* Play Track. 
+* Just a convenience to send a play track event
+**************/
+  void playTrack(String track) {
+//      sendEventToController(CE_PLAY_TRACK ,rack);  
+      Serial.println("Sending play track event");
+      if(MOCK_EVENT) {
+        Serial.println("MOCK EVENT");
+      } else {
+         sendEventToNode(MP3_PLAYER_NODE,CE_PLAY_TRACK, track);
+      }
+ 
+  }
 
   void debug(String msg) {
    if(debugOn) {
