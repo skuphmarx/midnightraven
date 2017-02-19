@@ -155,6 +155,8 @@ void processInputCommand() {
       doHelp();
     } else if (inSerialMsg.startsWith("send")) {
       doSendComm();
+    } else if(inSerialMsg.startsWith("safesend")) {
+      doSendCommWithResponse();
     } else {
       Serial.println("Unrecognized command: " + inSerialMsg);
     }
@@ -179,6 +181,13 @@ void doSendComm() {
 
   sendEventToNode(targetNode, CE_PING, "ping");
 
+}
+
+void doSendCommWithResponse() {
+
+  Serial.println("Sending and awaiting response");
+
+  sendEventToNodeWithResponse(MP3_PLAYER_NODE, CE_PLAY_TRACK, "track1");
 }
 
 void sendHeartbeatPing() {

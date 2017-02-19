@@ -72,8 +72,8 @@ void setup() {
 void resetControllerNode() {
      Serial.println("Restting Game Controller");
 
-    playTrack("reset10");
-   // resetAllNodes();
+   // playTrack("reset10");
+    resetAllNodes();
 }
 
  void localGameEventOccurred() {
@@ -121,6 +121,8 @@ void checkForTag() {
        performSend(DOOR_KNOCKER_NODE,CE_RESET_NODE,"");
     } else if(isDesiredTag(RESET_AND_START_DOOR_KNOCKER_NODE)) {
        performSend(DOOR_KNOCKER_NODE,CE_RESET_AND_START_PUZZLE,"");
+    } else if(isDesiredTag(RESET_MP3_PLAYER_NODE)) {
+      performSend(MP3_PLAYER_NODE, CE_RESET_NODE,"");
     }
    } // End tag is present
 }
