@@ -9,6 +9,7 @@
 #define INCLUDE_ASYNC_ACK true
 // Set the number of send attempts in PJON - default in library is 42.
 #define MAX_ATTEMPTS 200
+#define PJON_INCLUDE_SWBB
 #include <PJON.h>
 
 using namespace std;
@@ -109,7 +110,7 @@ int thisNode;
 
 eventDataStruct eventData;     // This will be filled after an event is received
 lastEventSentStruct lastEventSent; // Used if we need to resend an event because of no acknowledgement
-unsigned int responseWaitTime = 5000;  // We will wait 5 seconds for a response
+unsigned int responseWaitTime = 10000;  // We will wait 5 seconds for a response
 
 // PJON object
 PJON<SoftwareBitBang> bus;
@@ -262,6 +263,10 @@ void sendIntEventToNode(int nodeId, int eventId, int intGameData) {
   sendEventToNode(nodeId, eventId, intDataBuffer);
 }
 
+void sendPuzzleStartSuccess() {
+     sendEventToNode(GAME_CONTROLLER_NODE,CE_PUZZLE_START_SUCCESS, "");
+}
+
 void sendEventToNodeWithResponse(int nodeId, int eventId, String gameData) {
 
 	lastEventSent.event = eventId;
@@ -277,6 +282,7 @@ void processEventsAwaitingResponse() {
 // Is there an event awaiting response and has the time elasped such that we need to resend?
    if(lastEventSent.event >= 0 && ((millis() - lastEventSent.timeSent) > responseWaitTime)) {   
        Serial.println(F("RESENDING EVENT AS NO SUCCESS RECEVIED!"));
+	   lastEventSent.timeSent = millis();
        sendEventToNode(lastEventSent.sendTo,lastEventSent.event,lastEventSent.data);
    }
 }
@@ -319,8 +325,9 @@ void respondSuccessToSender() {
 	   returnEvent = CE_PLAY_TRACK_SUCCESS;
 	 break;
   }
-  
-   sendIntEventToNode(eventData.sentFrom, returnEvent, eventData.event);
+  Serial.println(F("Sending Success Response"));
+   sendEventToNode(eventData.sentFrom, returnEvent, "");
+   processSend();
 }
 
 /**
