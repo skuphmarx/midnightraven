@@ -33,6 +33,8 @@ static byte RESET_AND_START_HELP_RADIO_NODE[5]=  {4,4,4,4,5};           // RESET
 byte lastCardRead[5] = {1,1,1,1,1};
 unsigned long lastTimeRead;
 unsigned long delayBetweenSameCardRead = 10000;  // 10 seconds
+bool puzzleStartedSuccessfully = false;
+#define MAX_SEND_RETRYS 5     // Retry to send a message 5 times. If no success something very bad happened
 
 /* RFID Related setup
   * 3V -> VCC  NOTE 3V NOT 5V  RED
@@ -66,7 +68,9 @@ void setup() {
       resetControllerNode();
 
 
-      Serial.println("NODE READY");
+      Serial.println("NODE READY. Starting Game");
+
+      sendStartGameEvent(DOOR_KNOCKER_NODE); // To start the entire game
 }
 
 void resetControllerNode() {
@@ -92,6 +96,10 @@ void resetControllerNode() {
             Serial.print(eventData.data);
             Serial.println(F("]"));
             sendEventToNode(eventData.sentFrom, CE_PONG, "pong");
+        break;
+        case CE_PUZZLE_START_SUCCESS:
+           puzzleStartedSuccessfully = true;
+           Serial.println(F("RECEIVED Puzzle Start Success"));
         break;
       }
  
@@ -215,6 +223,27 @@ void performSend(int node, int event, String data) {
   } else {
     sendEventToNode(node,event,data);
   }
+}
+// Send a start game and wait for a success message. If none happens after some time then try again
+void sendStartGameEvent(int toNode) {
+   unsigned long startTime;
+   unsigned int numberOfRetrys = 0;
+   while(!puzzleStartedSuccessfully && numberOfRetrys < MAX_SEND_RETRYS) {
+     numberOfRetrys++;
+     if(numberOfRetrys > 1) {
+        Serial.println(F("RESENDING GAME START AS NO RESPONSE"));
+     }
+     performSend(toNode, CE_START_PUZZLE,"");
+     // now wait a specified time for a response
+     startTime = millis();
+     while(millis()-startTime < responseWaitTime && !puzzleStartedSuccessfully) {
+        doComm();
+     }
+     Serial.println(F("Finished Sending Game Start"));
+   }
+
+   
+  
 }
 
 /***************
