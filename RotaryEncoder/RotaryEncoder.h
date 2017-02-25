@@ -14,6 +14,7 @@ public:
 	int getClickValue();
 	void reset();
 	void updateClicks(bool isCurrentDirectionClockwise);
+	bool isLastTurnClockwise();
 
 	
 private:

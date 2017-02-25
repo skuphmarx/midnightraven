@@ -89,5 +89,11 @@ void RotaryEncoder :: updateClicks(bool isCurrentDirectionClockwise) {
 	  }
 }
 
+bool RotaryEncoder :: isLastTurnClockwise() {
+ return this->lastTurnClockwise;
+}
+
+
+
 
 
