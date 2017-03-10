@@ -263,6 +263,12 @@ void sendIntEventToNode(int nodeId, int eventId, int intGameData) {
   sendEventToNode(nodeId, eventId, intDataBuffer);
 }
 
+void sendPuzzleCompleteEvent(int fromNode) {
+  itoa(fromNode, &intDataBuffer[0], 10);
+  sendEventToNode(GAME_CONTROLLER_NODE,CE_PUZZLE_COMPLETED, intDataBuffer);
+
+}
+
 void sendPuzzleStartSuccess() {
      sendEventToNode(GAME_CONTROLLER_NODE,CE_PUZZLE_START_SUCCESS, "");
 }
