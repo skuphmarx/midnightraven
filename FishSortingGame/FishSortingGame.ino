@@ -625,7 +625,7 @@ void reset() {
 void receiveCommEvent() {
     //use eventData.whatever to get what was sent and switch
     switch (eventData.event) {
-        case RESET_EVENT:
+        case CE_RESET_NODE:
             reset();
             break;
         default:
