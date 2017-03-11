@@ -50,10 +50,10 @@ using namespace std;
 //#define DO_DEBUG
 
 // Uncomment to enable Debug level Serial Prints related to RFID
-#define DO_DEBUG_RFID
+//#define DO_DEBUG_RFID
 
-// Uncomment to enable printing game status update
-//#define DO_GAME_STATUS_UPDATE
+// Uncomment to enable printing game status update details
+//#define DO_GAME_STATUS_DETAILS
 
 // Uncomment to enable Debug level Serial Prints related to CommUtils
 #define DO_DEBUG_GAME_COMM
@@ -84,15 +84,15 @@ using namespace std;
 // The RFID has 4 bytes.
 static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xC2, 0x66, 0x7F, 0x64}, {0x2B, 0xEE, 0xFD, 0xC4} },   // 1.1, 1.2
-  { {0x54, 0x99, 0xDE, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 2.1, 2.2
-  { {0xE6, 0x93, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 3.1, 3.2
-  { {0xD4, 0x5E, 0x15, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 4.1, 4.2
-  { {0x52, 0xC1, 0x78, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 5.1, 5.2
-  { {0xE6, 0xD3, 0x2D, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 6.1, 6.2
-  { {0xF2, 0x92, 0x83, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 7.1, 7.2
-  { {0x86, 0xF0, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 8.1, 8.2
-  { {0x92, 0x0F, 0x43, 0x6D}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
-  { {0xF4, 0x68, 0x9B, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // 10.1, 10.2
+  { {0x54, 0x99, 0xDE, 0xFC}, {0xFB, 0x62, 0x08, 0xC5} },   // 2.1, 2.2
+  { {0xE6, 0x93, 0x2A, 0x12}, {0x9B, 0x8C, 0xFD, 0xC4} },   // 3.1, 3.2
+  { {0xD4, 0x5E, 0x15, 0xFC}, {0x7B, 0xD8, 0x00, 0xC5} },   // 4.1, 4.2
+  { {0x52, 0xC1, 0x78, 0x64}, {0x3B, 0x14, 0xFE, 0xC4} },   // 5.1, 5.2
+  { {0xE6, 0xD3, 0x2D, 0x12}, {0xDB, 0x50, 0x21, 0xC5} },   // 6.1, 6.2
+  { {0xF2, 0x92, 0x83, 0x64}, {0x1B, 0xB5, 0x06, 0xC5} },   // 7.1, 7.2
+  { {0x86, 0xF0, 0x2A, 0x12}, {0xDB, 0xC5, 0x06, 0xC5} },   // 8.1, 8.2
+  { {0x92, 0x0F, 0x43, 0x6D}, {0xFB, 0x84, 0x20, 0xC5} },   // 9.1, 9.2
+  { {0xF4, 0x68, 0x9B, 0xFC}, {0x6B, 0x81, 0x06, 0xC5} }    // 10.1, 10.2
 };
 
 // Audio Tracks
@@ -429,6 +429,7 @@ class MasterMindFlowerPotGame {
     MasterMindGameSolution* solutions[NUM_GAME_SOLUTIONS];
 
     bool gameIsStarted = false;
+    bool gameIsFinished = false;
     
     bool gameStatusChanged = false;
     byte numberFlowerPotsOnReaders = 0;
@@ -524,34 +525,21 @@ class MasterMindFlowerPotGame {
       // Is this the first flower pot in this game
       if ((firstPotTimeMillis == 0) && (numberFlowerPotsOnReaders > 0)) {
         firstPotTimeMillis = now;
-
-Serial.print("SET firstPotTimeMillis ");
-Serial.println(firstPotTimeMillis);
-        
       }
 
       // Is the first guess
       if ((firstGuessTimeMillis == 0) && isCompletedGuess()) {
         firstGuessTimeMillis = now;
-
-Serial.print("SET firstGuessTimeMillis ");
-Serial.println(firstGuessTimeMillis);
       }
 
       // Most recent guess
-//      if (isCompletedGuess()) {
-//        mostRecentGuessTimeMillis = now;
-
-//Serial.print("SET mostRecentGuessTimeMillis ");
-//Serial.println(mostRecentGuessTimeMillis);
-//      }
+      if (isCompletedGuess() && gameStatusChanged) {
+        mostRecentGuessTimeMillis = now;
+      }
 
       // Is this a winner
       if ((solutionFoundTimeMillis == 0) && isGameSolved()) {
         solutionFoundTimeMillis = now;
-
-Serial.print("SET solutionFoundTimeMillis ");
-Serial.println(solutionFoundTimeMillis);
       }
       
     }
@@ -628,6 +616,7 @@ Serial.println(solutionFoundTimeMillis);
     
     void reset() {
       gameStatusChanged = false;
+      gameIsFinished = false;
       numberFlowerPotsOnReaders = 0;
       numberCorrectFlowerPots = 0;
       gameStartTimeMillis = 0;
@@ -643,6 +632,10 @@ Serial.println(solutionFoundTimeMillis);
         reset();
         setGameStartTime();
         setGameStarted(true);
+#ifdef DO_INFO
+        Serial.print(F("Game solution is ")); 
+        Serial.println(getGameSolutionNumber()); 
+#endif
       }
     }
 
@@ -656,6 +649,14 @@ Serial.println(solutionFoundTimeMillis);
 
     void setGameStarted(bool val) {
       gameIsStarted = val;
+    }
+
+    bool isGameFinished() {
+      return gameIsFinished;
+    }
+
+    void setGameFinished(bool val) {
+      gameIsFinished = val;
     }
 
     uint8_t getNumberFlowerPotsOnReaders() {
@@ -691,7 +692,7 @@ Serial.println(solutionFoundTimeMillis);
       processReaderCurrentStatus();
 
       // Update Statistics
-      if (gameStatusChanged) {
+      if (gameStatusChanged && !isGameFinished()) {
         processStatisticsUpdate();
       }
        
@@ -800,22 +801,22 @@ void initializeGameEventComm() {
 #ifdef DO_GAME_EVENT_COMM
   // Node ID is in GameCommUtil.h
 
-//#ifdef DO_DEBUG
+#ifdef DO_DEBUG_GAME_COMM
   printBegin(F("CommNodeInit"));
   Serial.print(F(" "));
   Serial.print(MASTER_MIND_POT_GAME_NODE);
   Serial.print(F(", Pin: "));
   Serial.println(GAME_COMM_PIN);
-//#endif
+#endif
 
   //setCommUtilsReceiveTimeout(2000);
   
   initOverrideComm(MASTER_MIND_POT_GAME_NODE, GAME_COMM_PIN);
   setLocalEventHandler(receiveCommEvent);
   setLocalErrorHandler(errorHandler);
-//#ifdef DO_DEBUG  
+#ifdef DO_DEBUG_GAME_COMM  
   printEnd(F("CommNodeInit"));
-//#endif
+#endif
 #endif
 
 #ifndef DO_GAME_EVENT_COMM
@@ -916,25 +917,12 @@ void processReceivedStartGame() {
 void errorHandler(uint8_t code, uint8_t data) {
   if(code == CONNECTION_LOST) {
     Serial.println(F("CMErr1"));
-    //Serial.print("MM Connection with device ID ");
-    //Serial.print(data);
-    //Serial.println(" is lost.");
   } else if(code == PACKETS_BUFFER_FULL) {
     Serial.println(F("CMErr2"));
-//    Serial.print("MM Packet buffer is full, has now a length of ");
-//    Serial.println(data, DEC);
-//    Serial.println("Possible wrong bus configuration!");
-//    Serial.println("higher MAX_PACKETS in PJON.h if necessary.");
   } else if(code == CONTENT_TOO_LONG) {
     Serial.println(F("CMErr3"));
-//    Serial.print("MM Content is too long, length: ");
-//    Serial.println(data);
   } else {
     Serial.println(F("CMErr4"));
-//    Serial.print("MM Unknown error code received: ");
-//    Serial.println(code);
-//    Serial.print("With data: ");
-//    Serial.println(data);
   }
 }
 
@@ -959,12 +947,13 @@ void loop() {
 void processGameLoopIteration() {
   if (mmGameInstance->isGameStarted()) {
     mmGameInstance->updateGameStatus();
-    processSendEvents(mmGameInstance);
     
     if (mmGameInstance->getGameStatusChanged() || (millis() - mmGameInstance->lastPrintTime) > 15000) {
       printCurrentGameStatus(mmGameInstance);
       mmGameInstance->lastPrintTime = millis();
     }
+
+    processSendEvents(mmGameInstance);
 
   }
 }
@@ -975,7 +964,12 @@ void processGameLoopIteration() {
 void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 
 #ifdef DO_PLAY_GAME_LOGGING
-  if (mmGame->isGameSolved()) {
+  if (mmGame->isGameFinished()) {
+    Serial.print(F("-- "));
+    Serial.print(F("Game is finished! Duration(ms): "));
+    Serial.println(mmGame->getSolutionFoundTimeMillis() - mmGame->getFirstPotTimeMillis());
+  }
+  else if (mmGame->isGameSolved()) {
     Serial.print(F("-- "));
     Serial.print(F("You Win! Duration(ms): "));
     Serial.println(mmGame->getSolutionFoundTimeMillis() - mmGame->getFirstPotTimeMillis());
@@ -986,7 +980,7 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
   }
 #endif
 
-#ifdef DO_GAME_STATUS_UPDATE
+#ifdef DO_GAME_STATUS_DETAILS
   Serial.print(F("***:"));
   Serial.print(F(" #pots: "));
   Serial.print(mmGame->getNumberFlowerPotsOnReaders());
@@ -1028,9 +1022,10 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 
 void processSendEvents(MasterMindFlowerPotGame* mmGame) {
 
-  if (mmGame->getGameStatusChanged()) {
+  if (mmGame->getGameStatusChanged() && !mmGame->isGameFinished()) {
     if (mmGame->isGameSolved()) {
       sendAudioEvent(AUDIO_ALL_CORRECT_GUESS);
+      mmGame->setGameFinished(true);
     } else if (mmGame->isCompletedGuess()) {
       if (mmGame->getNumberCorrectFlowerPots() == 0) {
         sendAudioEvent(AUDIO_ZERO_CORRECT_GUESS);
