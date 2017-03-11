@@ -101,13 +101,30 @@ void resetControllerNode() {
            puzzleStartedSuccessfully = true;
            Serial.println(F("RECEIVED Puzzle Start Success"));
         break;
+        case CE_PUZZLE_COMPLETED:
+           Serial.println(F("RECEIVED Puzzle Completed Event"));
+           sendEventToNode(eventData.sentFrom, CE_PUZZLE_COMPLETED_SUCCESS, "");
+        break;
       }
  
     }
 //
 // Tell all the nodes to reset
 void resetAllNodes() {
-   performSend(0, CE_RESET_NODE,"");  //PJON_BROADCAST=0 but for some reason not defined here
+//   performSend(0, CE_RESET_NODE,"");  //PJON_BROADCAST=0 but for some reason not defined here
+   doResetNode(MP3_PLAYER_NODE);
+   doResetNode(DOOR_KNOCKER_NODE);
+//   doResetNode(MASTER_MIND_POT_GAME_NODE);
+//   doResetNode(FISH_SORTING_GAME_NODE);
+//   doResetNode(DOCK_PLANKS_GAME_NODE);
+   doResetNode(LICENSE_PLATE_GAME_NODE);
+//   doResetNode(HELP_RADIO_NODE);
+ }
+
+ void doResetNode(int nodeId) {
+   performSend(nodeId, CE_RESET_NODE,"");
+   processSend();
+   delay(3000);
  }
 
 void loop() {
