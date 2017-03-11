@@ -48,6 +48,7 @@ using namespace std;
 #define CE_PUZZLE_NOT_STARTED    70
 #define CE_PUZZLE_IN_PROGRESS    71
 #define CE_PUZZLE_COMPLETED      72
+#define CE_PUZZLE_COMPLETED_SUCCESS 62   // Event passed from Game Controller to Puzzle in response to puzzle complete
 
 // Health related events
 #define CE_PING                 50
@@ -85,12 +86,7 @@ struct eventDataStruct {
   char data[MAX_EVENT_DATA+1] = "";  // Need the +1 for the string terminator.
 };
 
-struct lastEventSentStruct {
-  int sendTo = -1;
-  int event = -1;
-  String data;
-  unsigned long timeSent=0;
-};
+
 
 static void (*gameEventOccurred)(void);
 
@@ -109,8 +105,9 @@ char intDataBuffer[MAX_EVENT_DATA];
 int thisNode;
 
 eventDataStruct eventData;     // This will be filled after an event is received
-lastEventSentStruct lastEventSent; // Used if we need to resend an event because of no acknowledgement
-unsigned int responseWaitTime = 10000;  // We will wait 5 seconds for a response
+unsigned int responseWaitTime = 10000;  // We will wait 1 seconds for a response
+bool eventSentSuccessfully = false;  // used for events that need a response. START and COMPLETE mostly
+int importantEventResponse = 0;  // The important event response we are waiting to receive
 
 // PJON object
 PJON<SoftwareBitBang> bus;
@@ -118,8 +115,7 @@ PJON<SoftwareBitBang> bus;
 // Local funtions
 void processSend();
 void processReceive();
-void processEventsAwaitingResponse();
-bool clearEventsAwaitingResponse();
+
 
 
 void eventReceivedFromController(uint8_t *payload, uint16_t length, const PacketInfo &packet_info) {
@@ -154,9 +150,11 @@ void eventReceivedFromController(uint8_t *payload, uint16_t length, const Packet
     EventDataBuffer[length-3] = 0;      // I think this is unnecessary but doesn't hurt anything
     strcpy(eventData.data, EventDataBuffer);
 	
-	if(!clearEventsAwaitingResponse()) {
-        gameEventOccurred();
-    }
+	if(importantEventResponse > 0 && eventData.event == importantEventResponse) {
+	     eventSentSuccessfully = true;
+	} else {	
+       gameEventOccurred();
+	}
 
   } else {
 #ifdef DO_COMM_UTILS_DEBUG
@@ -170,7 +168,6 @@ void eventReceivedFromController(uint8_t *payload, uint16_t length, const Packet
 void doComm() {
   processSend();
   processReceive();
-  processEventsAwaitingResponse();
 }
 
 void processSend() {
@@ -269,55 +266,34 @@ void sendPuzzleCompleteEvent(int fromNode) {
 
 }
 
+void sendControllerImportantEvent(int theEvent, int responseEvent, int fromNode) {
+   unsigned long startTime;
+   unsigned int numberOfRetrys = 0;
+   
+   importantEventResponse = responseEvent;
+   
+   itoa(fromNode, &intDataBuffer[0], 10);
+   eventSentSuccessfully = false;
+   while(!eventSentSuccessfully && numberOfRetrys < 5) {
+     numberOfRetrys++;
+     if(numberOfRetrys > 1) {
+        Serial.println(F("RESENDING Important EVENT AS NO RESPONSE RECEIVED"));
+     }
+     sendEventToNode(GAME_CONTROLLER_NODE,theEvent, intDataBuffer);
+     // now wait a specified time for a response
+     startTime = millis();
+     while(millis()-startTime < responseWaitTime && !eventSentSuccessfully) {
+        doComm();
+     }
+     Serial.println(F("Finished Sending Important Event"));
+   }
+}
+
 void sendPuzzleStartSuccess() {
      sendEventToNode(GAME_CONTROLLER_NODE,CE_PUZZLE_START_SUCCESS, "");
 }
 
-void sendEventToNodeWithResponse(int nodeId, int eventId, String gameData) {
 
-	lastEventSent.event = eventId;
-	lastEventSent.sendTo = nodeId;
-	lastEventSent.data = gameData;
-	lastEventSent.timeSent = millis();
-	
-	sendEventToNode(nodeId,eventId,gameData);
-}
-
-
-void processEventsAwaitingResponse() {
-// Is there an event awaiting response and has the time elasped such that we need to resend?
-   if(lastEventSent.event >= 0 && ((millis() - lastEventSent.timeSent) > responseWaitTime)) {   
-       Serial.println(F("RESENDING EVENT AS NO SUCCESS RECEVIED!"));
-	   lastEventSent.timeSent = millis();
-       sendEventToNode(lastEventSent.sendTo,lastEventSent.event,lastEventSent.data);
-   }
-}
-
-bool clearEventsAwaitingResponse() {
-   bool retValue = false;  // This was not a success event to pass along to the game
-
-   if(lastEventSent.event >= 0) {
-      switch(eventData.event) {
-	    case CE_PUZZLE_START_SUCCESS:
-		   if(lastEventSent.event == CE_START_PUZZLE) {
-		       lastEventSent.event = -1;  // No longer awaiting a response
-			   retValue = true;
-			   Serial.println(F("RECEIVED SUCCESS FOR PUZZLE START!"));
-		   }
-		break;
-		case CE_PLAY_TRACK_SUCCESS:
-		   if(lastEventSent.event == CE_PLAY_TRACK) {
-		       lastEventSent.event = -1;  // No longer awaiting a response
-			   retValue = true;
-			   Serial.println(F("RECEIVED SUCCESS FOR PLAY TRACK!"));
-		   }
-		break;
-	  
-	  }
-   }
-   
-   return retValue;
-}
 
 /**
  *
