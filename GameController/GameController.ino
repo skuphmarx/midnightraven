@@ -55,6 +55,8 @@ bool puzzleStartedSuccessfully = false;
 
 #define LOCAL_COMM_PIN A0 // Override the default (3) which doesn't seem to work. 
 
+int currentGameState = 0;  // Indicates game not yet started
+
 void setup() {
      initOverrideComm(GAME_CONTROLLER_NODE,LOCAL_COMM_PIN);
       
@@ -75,9 +77,17 @@ void setup() {
 
 void resetControllerNode() {
      Serial.println("Restting Game Controller");
+     currentGameState = 0;
 
    // playTrack("reset10");
     resetAllNodes();
+    unsigned long startTime = millis();
+    while((millis() - startTime) < 4000) {
+      doComm();                             
+    }
+    puzzleStartedSuccessfully = false;
+    sendStartGameEvent(DOOR_KNOCKER_NODE); // To start the entire game
+
 }
 
  void localGameEventOccurred() {
@@ -100,13 +110,41 @@ void resetControllerNode() {
         case CE_PUZZLE_START_SUCCESS:
            puzzleStartedSuccessfully = true;
            Serial.println(F("RECEIVED Puzzle Start Success"));
+           nextPuzzleStarted();
         break;
         case CE_PUZZLE_COMPLETED:
            Serial.println(F("RECEIVED Puzzle Completed Event"));
            sendEventToNode(eventData.sentFrom, CE_PUZZLE_COMPLETED_SUCCESS, "");
+           puzzleCompleted();
         break;
       }
  
+    }
+
+// Move to whatever the next games is
+    void nextPuzzleStarted() {
+       switch(currentGameState) {
+          case 0:
+            currentGameState = 1;  // Front Door Knocker. This game is first so started by reset. Called and set here after it responds that it started
+          break;
+
+          case 1:
+            currentGameState = 2;  // FLower pot has taken over
+          break;
+       }
+      
+    }
+
+    void puzzleCompleted() {
+
+      momentaryComm(2000);
+      puzzleStartedSuccessfully = false;
+      switch(currentGameState) {
+        case 1:    // Front Door Knocker completed. 
+           Serial.println(F("Staring Flower Pot Game"));
+           sendStartGameEvent(MASTER_MIND_POT_GAME_NODE); // Start Flower Pot puzzle
+        break;
+      }
     }
 //
 // Tell all the nodes to reset
@@ -117,14 +155,22 @@ void resetAllNodes() {
 //   doResetNode(MASTER_MIND_POT_GAME_NODE);
 //   doResetNode(FISH_SORTING_GAME_NODE);
 //   doResetNode(DOCK_PLANKS_GAME_NODE);
-   doResetNode(LICENSE_PLATE_GAME_NODE);
+//   doResetNode(LICENSE_PLATE_GAME_NODE);
 //   doResetNode(HELP_RADIO_NODE);
  }
 
  void doResetNode(int nodeId) {
    performSend(nodeId, CE_RESET_NODE,"");
-   processSend();
-   delay(3000);
+//   delay(3000);
+   momentaryComm(4000);
+ }
+
+ void momentaryComm(int length) {
+   unsigned long startTime = millis();
+   while((millis() - startTime) < length) {
+      doComm();
+   }
+  
  }
 
 void loop() {
