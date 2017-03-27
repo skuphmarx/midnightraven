@@ -33,7 +33,7 @@ using namespace std;
 
 // Which nodes do we communicate to. 
 #define CONTROLLER_NODE GAME_CONTROLLER_NODE
-#define AUDIO_NODE      GAME_CONTROLLER_NODE
+#define AUDIO_NODE      MP3_PLAYER_NODE
 
 // Uncomment to enable event communications
 #define DO_GAME_EVENT_COMM
@@ -47,13 +47,13 @@ using namespace std;
 #define DO_PLAY_GAME_LOGGING
 
 // Uncomment to enable Debug level Serial Prints
-//#define DO_DEBUG
+#define DO_DEBUG
 
 // Uncomment to enable Debug level Serial Prints related to RFID
 #define DO_DEBUG_RFID
 
 // Uncomment to enable printing game status update
-//#define DO_GAME_STATUS_UPDATE
+#define DO_GAME_STATUS_UPDATE
 
 // Uncomment to enable Debug level Serial Prints related to CommUtils
 #define DO_DEBUG_GAME_COMM
@@ -62,7 +62,7 @@ using namespace std;
 // Board locations *******************
 
 // PIN for comm
-#define GAME_COMM_PIN 12
+#define GAME_COMM_PIN A0
 
 // RFID reset pin. Configurable but shared by all RFID readers
 #define RST_PIN         10 
@@ -96,12 +96,15 @@ static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
 };
 
 // Audio Tracks
-#define BASE_AUDIO_TRACK_ID              0
-#define AUDIO_ZERO_CORRECT_GUESS         BASE_AUDIO_TRACK_ID
-#define AUDIO_ONE_CORRECT_GUESS          BASE_AUDIO_TRACK_ID + 1
-#define AUDIO_TWO_CORRECT_GUESS          BASE_AUDIO_TRACK_ID + 2
-#define AUDIO_ALL_CORRECT_GUESS          BASE_AUDIO_TRACK_ID + 3
-#define AUDIO_NO_ACTION                  BASE_AUDIO_TRACK_ID + 4
+#define BASE_AUDIO_TRACK_ID              20
+#define AUDIO_ZERO_CORRECT_GUESS         "track20"
+#define AUDIO_ZERO_CORRECT_GUESS2        "track21"
+#define AUDIO_ONE_CORRECT_GUESS          "track22"
+#define AUDIO_ONE_CORRECT_GUESS2         "track23"
+#define AUDIO_TWO_CORRECT_GUESS          "track24"
+#define AUDIO_TWO_CORRECT_GUESS2         "track25"
+#define AUDIO_ALL_CORRECT_GUESS_QUICK    "track26"
+#define AUDIO_ALL_CORRECT_GUESS_SLOW     "track27"
 
 // Local functions
 void printBegin(String s);
@@ -726,7 +729,7 @@ Serial.println(solutionFoundTimeMillis);
 
 // This is the main game object
 MasterMindFlowerPotGame* mmGameInstance;
-
+int numberOfAttempts = 0;
 
 /**
  * Arduino initialization entry point.
@@ -882,7 +885,8 @@ void receiveCommEvent() {
       reset();
 //      respondAckToSender();
       break;
-    case CE_START_PUZZLE:
+    case CE_RESET_AND_START_PUZZLE:
+      sendPuzzleStartSuccess();
       processReceivedStartGame();
 //      respondAckToSender();
       break;
@@ -905,11 +909,22 @@ void receiveCommEvent() {
 }
 
 void reset() {
-  mmGameInstance->reset();  
+  mmGameInstance->reset(); 
+  numberOfAttempts = 0; 
+  sendEventToNode(MP3_PLAYER_NODE,CE_PLAY_TRACK, "reset40");
 }
 
 void processReceivedStartGame() {
   mmGameInstance->processStartGame();
+  // Play the tracks to start the game
+  uint8_t  whichSolution = mmGameInstance->getGameSolutionNumber();
+  String startTrack = "track11";
+  if(whichSolution == 1) {
+    startTrack = "track12";
+  } else if(whichSolution == 2) {
+    startTrack = "track13";
+  }
+  sendAudioEvent(startTrack);
 }
 
 //Sample Error Handler
@@ -1030,26 +1045,55 @@ void processSendEvents(MasterMindFlowerPotGame* mmGame) {
 
   if (mmGame->getGameStatusChanged()) {
     if (mmGame->isGameSolved()) {
-      sendAudioEvent(AUDIO_ALL_CORRECT_GUESS);
+     gameCompleted();
+      
     } else if (mmGame->isCompletedGuess()) {
+      numberOfAttempts++;
       if (mmGame->getNumberCorrectFlowerPots() == 0) {
-        sendAudioEvent(AUDIO_ZERO_CORRECT_GUESS);
+        chooseAndSendAudioEvent(AUDIO_ZERO_CORRECT_GUESS,AUDIO_ZERO_CORRECT_GUESS2);
       } else if (mmGame->getNumberCorrectFlowerPots() == 1) {
-        sendAudioEvent(AUDIO_ONE_CORRECT_GUESS);
+        chooseAndSendAudioEvent(AUDIO_ONE_CORRECT_GUESS,AUDIO_ONE_CORRECT_GUESS2);
       } else if (mmGame->getNumberCorrectFlowerPots() == 2) {
-        sendAudioEvent(AUDIO_TWO_CORRECT_GUESS);
+        chooseAndSendAudioEvent(AUDIO_TWO_CORRECT_GUESS,AUDIO_TWO_CORRECT_GUESS2);
       }
     }
   }  
   
 }
+//
+// The game is complete. Perform all the necessary actions and tell the controller node of this amazing feat.
+void gameCompleted() {
+      if(numberOfAttempts <= 5) {
+         sendAudioEvent(AUDIO_ALL_CORRECT_GUESS_QUICK);
+      } else {
+         sendAudioEvent(AUDIO_ALL_CORRECT_GUESS_SLOW);
+      }
+      // Do comm for the length of the track and then tell the node you are done
+      unsigned long startTime = millis();
+      while(millis() - startTime < 10000) {
+        doComm();
+      }
+      sendControllerImportantEvent(CE_PUZZLE_COMPLETED,CE_PUZZLE_COMPLETED_SUCCESS,MASTER_MIND_POT_GAME_NODE);
+      
+}
 
-void sendAudioEvent(int audioId) {
+void chooseAndSendAudioEvent(String track1, String track2) {
+  String trackToSend = track1;
+
+  int randomTrack = random(0, 2);  // Returns a long value from 0 to value-1 (so 1, in this case)
+  if(randomTrack == 1) {
+    trackToSend = track2;
+  }
+  
+  sendAudioEvent(trackToSend);
+}
+
+void sendAudioEvent(String audioId) {
 #ifdef DO_DEBUG_GAME_COMM    
   Serial.print(F("Send Audio: "));
   Serial.println(audioId);
 #endif  
-  sendIntEventToNode(AUDIO_NODE, CE_PLAY_TRACK, audioId);
+  sendEventToNode(AUDIO_NODE, CE_PLAY_TRACK, audioId);
 }
 
 
