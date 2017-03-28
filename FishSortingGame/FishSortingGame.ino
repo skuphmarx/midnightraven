@@ -16,11 +16,21 @@ using namespace std;
 // Uncomment to enable event communications
 //#define DO_GAME_EVENT_COMM
 
+// Comment this if the game requires a start event to be active
+#define GAME_START_EVENT_NOT_REQUIRED
+
+
 #define PIXEL_INITIAL_PIN             4  // Pixel pin numbers are sequential starting with this value.
 #define READER_INITIAL_RFID_NSS_PIN   7  // RFID pin numbers are sequential starting with this value.
 #define RST_PIN                      10  // RFID reset pin. Configurable but shared by all RFID readers
 
 #define NUM_FISH_PER_SPECIES          2  // Each species has this many individual fish
+
+struct RGBColor {
+    byte r;
+    byte g;
+    byte b;
+};
 
 enum fishSpeciesColorId {
     red,
@@ -30,28 +40,17 @@ enum fishSpeciesColorId {
     NUM_FISH_SPECIES
 };
 
-struct RGBColor {
-    byte r;
-    byte g;
-    byte b;
-};
+RGBColor rgbColorforFishSpeciesColorId[NUM_FISH_SPECIES] = { {150,0,0}, {150,150,0}, {0,150,0}, {0,0,150} };
 
-RGBColor rgbColorforFishSpeciesColorId[fishSpeciesColorId::NUM_FISH_SPECIES] = {
-    {150,0,0},   //red
-    {150,150,0}, //yellow
-    {0,150,0},   //green
-    {0,0,150}    //blue
-};
-
-byte tagIdsForGameStartFish[NUM_FISH_PER_SPECIES][4] = {
-    {0x7A, 0x31, 0x41, 0xD5}, {0xFF, 0xFF, 0xFF, 0xFF}   // game start fish ID's
-};
-
-byte tagIdsForFishSpeciesColorId[fishSpeciesColorId::NUM_FISH_SPECIES][NUM_FISH_PER_SPECIES][4] = {
+static const byte tagIdsForFishSpeciesColorId[NUM_FISH_SPECIES][NUM_FISH_PER_SPECIES][4] = {
     { {0x7A, 0x31, 0x41, 0xD5}, {0xFF, 0xFF, 0xFF, 0xFF} },   // red fish ID's
     { {0x54, 0x99, 0xDE, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // yellow fish ID's
     { {0xE6, 0x93, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // green fish ID's
     { {0xD4, 0x5E, 0x15, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // blue fish ID's
+};
+
+byte tagIdsForGameStartFish[NUM_FISH_PER_SPECIES][4] = {
+    {0x7A, 0x31, 0x41, 0xD5}, {0xFF, 0xFF, 0xFF, 0xFF}   // game start fish ID's
 };
 
 // **********************************************************************************
@@ -67,21 +66,21 @@ class PixelLightString {
     void init () {
         pixel = new Adafruit_NeoPixel(lightsPerString, pin, NEO_GRB + NEO_KHZ800); // Init each Pixel, unique pins
         pixel->begin();
-        this->reset();
+        reset();
     }
     
     //Theatre-style crawling lights.
     void flash(uint32_t c, uint8_t wait) {
         for (int j=0; j<10; j++) {  //do 10 cycles of chasing
             for (int q=0; q < 3; q++) {
-                for (uint16_t i=0; i < this->lightsPerString; i=i+3) {
+                for (uint16_t i=0; i < lightsPerString; i=i+3) {
                     pixel->setPixelColor(i+q, c);    //turn every third pixel on
                 }
                 pixel->show();
                 
                 delay(wait);
                 
-                for (uint16_t i=0; i < this->lightsPerString; i=i+3) {
+                for (uint16_t i=0; i < lightsPerString; i=i+3) {
                     pixel->setPixelColor(i+q, 0);        //turn every third pixel off
                 }
             }
@@ -95,21 +94,21 @@ public:
     }
     
     PixelLightString(int numLights, int pinNumber) {
-        this->lightsPerString = numLights;
-        this->pin = pinNumber;
+        lightsPerString = numLights;
+        pin = pinNumber;
         init();
     }
     
     void flashColor(RGBColor color) {
-        this->flash(pixel->Color(color.r, color.g, color.b), flashDuration);
+        flash(pixel->Color(color.r, color.g, color.b), flashDuration);
     }
     
     void reset () {
-        this->light({0,0,0});
+        light({0,0,0});
     }
     
     void light(RGBColor color) {
-        for(int i=0; i<this->lightsPerString; i++) {
+        for(int i=0; i<lightsPerString; i++) {
             pixel->setPixelColor(i,pixel->Color(color.r,color.g,color.b));
         }
         pixel->show();
@@ -123,8 +122,10 @@ public:
 // **********************************************************************************
 class RFIDTag {
     
+    const static byte MAX_ID_BYTES = 4;
+    
     byte size = 0;
-    byte id[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };  // Size matches MFRC522 Uid struct
+    byte id[MAX_ID_BYTES] = { 0, 0, 0, 0 };  // 4 max
     bool clearFlag = true;
     
 public:
@@ -133,13 +134,22 @@ public:
         clearId();
     }
     
+    RFIDTag(byte b1, byte b2, byte b3, byte b4) {
+        id[0] = b1;
+        id[1] = b2;
+        id[2] = b3;
+        id[3] = b4;
+        size=4;
+        clearFlag = false;
+    }
+    
     RFIDTag(byte* uidBytes, byte inSize) {
         clearId();
         setId(uidBytes, inSize);
     }
     
     void clearId() {
-        memset(id, 0, 10);
+        memset(id, 0, MAX_ID_BYTES);
         clearFlag = true;
     }
     
@@ -148,9 +158,13 @@ public:
     }
     
     void setId(byte *uidBytes, byte inSize) {
-        memcpy(id, uidBytes, inSize);
-        size = inSize;
-        clearFlag = false;
+        if (inSize <= MAX_ID_BYTES) {
+            memcpy(id, uidBytes, inSize);
+            size = inSize;
+            clearFlag = false;
+        } else {
+            Serial.println(F("RFIDTag Err 1"));
+        }
     }
     
     bool isEqualId(MFRC522::Uid *uid) {
@@ -162,13 +176,13 @@ public:
     }
     
     bool operator==(const RFIDTag& tag) {
-        return (this->size == tag.size) &&
-        (this->clearFlag == tag.clearFlag) &&
-        (memcmp(this->id, tag.id, this->size) == 0);
+        return (size == tag.size) &&
+        (clearFlag == tag.clearFlag) &&
+        (memcmp(id, tag.id, size) == 0);
     }
     
     void printIdToSerial() {
-        for (byte i = 0; i < size; i++) {
+        for (byte i=0; i<size; i++) {
             Serial.print(id[i] < 0x10 ? " 0" : " ");
             Serial.print(id[i], HEX);
         }
@@ -198,14 +212,14 @@ public:
         digitalWrite(pinId, HIGH);
         
         // Initialize the RFID reader card
-        bool initGood = this->initializeFirmwareCommunication();
+        bool initGood = initializeFirmwareCommunication();
 #ifdef DO_DEBUG
         Serial.print(F(" Firmware init is "));
         Serial.print(initGood ? F("good.") : F("bad."));
         Serial.print(F(" Version: 0x"));
-        Serial.print(this->getFirmwareVersionValue(), HEX);
-        Serial.print(this->isExpectedFirmwareVersion() ? F(" [IsExpected] ") : F(" [IsNotExpected] "));
-        this->PCD_DumpVersionToSerial();
+        Serial.print(getFirmwareVersionValue(), HEX);
+        Serial.print(isExpectedFirmwareVersion() ? F(" [IsExpected] ") : F(" [IsNotExpected] "));
+        PCD_DumpVersionToSerial();
 #endif
     }
     
@@ -231,27 +245,12 @@ public:
     }
     
     bool initializeFirmwareCommunication() {
-        
         // Initialize the RFID reader card
-        // Retries do not seem to help.
-        byte v = 0x00;
-        for (byte bb=0; bb<1; bb++) {
-            // Maybe help inconsistent startup? Does not seem to help.
-            //delay(500);
-            
-            this->PCD_Init();
-            firmwareVersionValue = this->PCD_ReadRegister(this->VersionReg);
-            
-            if (isExpectedFirmwareVersion()) {
-                break;
-            }
-            
-        }
-        
+        PCD_Init();
+        firmwareVersionValue = PCD_ReadRegister(VersionReg);
         // So far have not found a good way to determine if communication is good or bad.
         return true;
     }
-    
 };
 
 class FishSpecies; //forward declaration of FishSpecies
@@ -293,11 +292,13 @@ public:
      * if the provided uid equals the current tag Id. We want only one tag per reader at at time, the first
      * one wins.
      */
-    void processTagUpdate(MFRC522::Uid *uid) {
+    bool processTagUpdate(MFRC522::Uid *uid) {
+        bool foundNewTag = false;
         if (currentRFIDTag->isIdClear()) {
             currentRFIDTag->setId(uid);
             timeLastChanged = millis();
             timeLastUpdated = timeLastChanged;
+            foundNewTag = true;
 #ifdef DO_DEBUG
             Serial.println("processTagUpdate");
             currentRFIDTag->printIdToSerial();
@@ -305,6 +306,7 @@ public:
         } else if (currentRFIDTag->isEqualId(uid)) {
             timeLastUpdated = millis();
         }
+        return foundNewTag;
     }
     
     void clearCurrentTag() {
@@ -339,7 +341,7 @@ public:
 class Post {
     //each post contains a string of Pixel LED lights and an RFID reader
     
-    const static int NUM_PIXELS_PER_POST = 30;
+    const static int NUM_PIXELS_PER_POST = 10;
 
     int id;
     PixelLightString *pixelLight = NULL;
@@ -347,10 +349,10 @@ class Post {
     
 public:
     Post ( int postId ) {
-        this->id = postId;
+        id = postId;
         Serial.println("@FIXME: All pixel lights on a single pin for now");
-        //this->pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, postId + PIXEL_INITIAL_PIN);
-        this->pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, PIXEL_INITIAL_PIN);
+        //pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, postId + PIXEL_INITIAL_PIN);
+        pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, PIXEL_INITIAL_PIN);
 #ifdef DO_DEBUG
         Serial.print(F("Reader "));
         Serial.print(postId);
@@ -358,7 +360,7 @@ public:
         Serial.print(postId + READER_INITIAL_RFID_NSS_PIN);
         Serial.print(F("."));
 #endif
-        this->rfidReader = new PostReader( postId + READER_INITIAL_RFID_NSS_PIN, RST_PIN);
+        rfidReader = new PostReader( postId + READER_INITIAL_RFID_NSS_PIN, RST_PIN);
     }
     
     int getId() {
@@ -368,32 +370,48 @@ public:
     void reset() {
 #ifdef DO_DEBUG
         Serial.print("Reseting post ");
-        Serial.println(this->id);
+        Serial.println(id);
 #endif
-        this->pixelLight->reset();
+        pixelLight->reset();
     }
 
-    void scanForFish() {
+    bool scanForFish() {
         if (rfidReader->isTagDataAvailable()) {
-            rfidReader->processTagUpdate(&rfidReader->uid);
+            return rfidReader->processTagUpdate(&rfidReader->uid);
         }
+        return false;
     }
     
     bool isFishPresent() {
         return rfidReader->isTagPresent();
     }
     
-    bool isFishPresentWithTag (RFIDTag *tag) {
-        return (this->isFishPresent() && tag == rfidReader->getCurrentTag());
+    bool currentFishMatches (RFIDTag *tag) {
+#ifdef DO_DEBUG
+        Serial.print("Scanning post ");
+        Serial.print(id);
+        Serial.print(" for fish with tag ");
+        tag->printIdToSerial();
+        Serial.println();
+#endif
+        return (tag == rfidReader->getCurrentTag());
+    }
+    
+    unsigned long getTimeLastUpdated() {
+        return rfidReader->getTimeLastUpdated();
+    }
+    
+    void clearCurrentTag() {
+        rfidReader->clearCurrentTag();
     }
 
     
     void light(RGBColor color) {
 #ifdef DO_DEBUG
         Serial.print("Lighting post ");
-        Serial.print(this->id);
+        Serial.print(id);
         Serial.print(" on pin ");
-        Serial.print(PIXEL_INITIAL_PIN); //Serial.print(this->id+PIXEL_INITIAL_PIN);
+        Serial.print(PIXEL_INITIAL_PIN); //Serial.print(id+PIXEL_INITIAL_PIN);
         Serial.print(" with color (");
         Serial.print(color.r);
         Serial.print(", ");
@@ -402,11 +420,11 @@ public:
         Serial.print(color.b);
         Serial.println(")");
 #endif
-        this->pixelLight->light(color);
+        pixelLight->light(color);
     }
     
     void flashColor(RGBColor c) {
-        this->pixelLight->flashColor(c);
+        pixelLight->flashColor(c);
     }
 
 };
@@ -416,18 +434,21 @@ public:
 // **********************************************************************************
 class FishSpecies {
 
-    fishSpeciesColorId id; // ID of this species; 0-3 or whatever.
-    RGBColor color;        // Color of this species.
+    int id;         // ID of this species; 0-3 or whatever.
+    RGBColor color; // Color of this species.
 
     RFIDTag* knownTags[NUM_FISH_PER_SPECIES];
     int numberKnownTags = 0;
     
-    
 public:
     
     FishSpecies( int speciesId ) {
+        Serial.print(speciesId);
         id = speciesId;
+        Serial.print(id);
         color = rgbColorforFishSpeciesColorId[speciesId];
+        Serial.print(speciesId);
+        Serial.print(id);
     }
     
     int getId() {
@@ -456,6 +477,17 @@ public:
         return false;
     }
     
+    void printToSerial() {
+        Serial.print("FishSpecies ");
+        Serial.print(id);
+        Serial.print(": (");
+        Serial.print(color.r);
+        Serial.print(", ");
+        Serial.print(color.g);
+        Serial.print(", ");
+        Serial.print(color.b);
+        Serial.println(")");
+    }
 };
 
 // **********************************************************************************
@@ -468,7 +500,10 @@ class FishSortingGame {
     
     int gracePeriod = INITIAL_GRACE_PERIOD;
     bool gameStatusChanged = false;
-    bool gameStarted = false;
+    bool gameActivated = false; //false until the room tells us we're ready to place via local event
+    bool gameInProgress = false; //false until we detect a game start fish on post 0. Stays true until game is solved or is failed
+
+    RFIDTag* gameStartTag[2] = { new RFIDTag(tagIdsForGameStartFish[0], 4), new RFIDTag(tagIdsForGameStartFish[1], 4) }; // 4 bytes in each RFID tag
     
     int postSequence[SOLUTION_SEQUENCE_LENGTH] = {0, 1, 2, 0, 1, 2, 0, 1, 2, 1};
     fishSpeciesColorId colorSequence[SOLUTION_SEQUENCE_LENGTH] = { red, yellow, green, blue, blue, green, yellow, red, red, green };
@@ -476,7 +511,7 @@ class FishSortingGame {
     int currentSequencePosition = 0;
     unsigned long lastLightTime = 0;
     
-    FishSpecies *fishSpecies[fishSpeciesColorId::NUM_FISH_SPECIES];
+    FishSpecies *fishSpecies[NUM_FISH_SPECIES]; //@FIXME: I can remove the fishSpeciesColorId::
     int numFishSpecies = 0; //Number of Fish known to this game
     
     Post *posts[NUM_POSTS];
@@ -487,7 +522,6 @@ class FishSortingGame {
 #ifdef DO_DEBUG
         Serial.println("Begin RFID initialization.");
 #endif
-        SPI.begin(); // Init SPI bus to communicate with RFID cards
         for (int i=0; i<NUM_POSTS; i++) {
             posts[i] = new Post(i);
         }
@@ -507,16 +541,16 @@ public:
 #ifdef DO_DEBUG
         Serial.println("Resetting Fish Sorting Game");
 #endif
-        this->currentSequencePosition = 0;
-        this->lastLightTime = 0;
-        this->gameStatusChanged = false;
+        currentSequencePosition = 0;
+        lastLightTime = 0;
+        gameStatusChanged = false;
         for (int i=0; i<NUM_POSTS; i++) {
-            this->posts[i]->reset();
+            posts[i]->reset();
         }
     }
 
     void addFishSpecies(FishSpecies *newSpecies) {
-        if (numFishSpecies < fishSpeciesColorId::NUM_FISH_SPECIES) {
+        if (numFishSpecies < NUM_FISH_SPECIES) {
             fishSpecies[numFishSpecies] = newSpecies;
             numFishSpecies++;
         } else {
@@ -525,7 +559,7 @@ public:
     }
     
     void lightNextPost () {
-        if (!gameStarted) {
+        if (!gameInProgress) {
             return;
         }
         
@@ -555,13 +589,33 @@ public:
         posts[postSequence[currentSequencePosition]]->light(rgbColorforFishSpeciesColorId[colorSequence[currentSequencePosition]]);
 #ifdef DO_DEBUG
             Serial.print("Lighting post at sequence ");
-            Serial.println(this->currentSequencePosition);
+            Serial.println(currentSequencePosition);
 #endif
     }
 
-    void scanForFish() {
+    bool scanForFish() {
+        bool foundAtLeastOneNewTag = false;
         for (uint8_t i=0; i<NUM_POSTS; i++) {
-            posts[i]->scanForFish();
+            foundAtLeastOneNewTag = posts[i]->scanForFish() || foundAtLeastOneNewTag;
+        }
+        return foundAtLeastOneNewTag;
+    }
+    
+    void seekStartFish() {
+        unsigned long now = millis();
+        // Check each post for game start fish
+        for (uint8_t i=0; i<NUM_POSTS; i++) {
+            if(posts[i]->isFishPresent()) {
+                if ((now - posts[i]->getTimeLastUpdated()) > 2000 ) {
+                    posts[i]->clearCurrentTag();
+                    gameStatusChanged = true;
+                } else if (gameStatusChanged && posts[i]->currentFishMatches(gameStartTag[0])) {
+                        gameInProgress = true;
+        #ifdef DO_DEBUG
+                        Serial.println("Game Started (detected game start fish)");
+        #endif
+                }
+            }
         }
     }
 
@@ -569,13 +623,12 @@ public:
         gameStatusChanged = false;
         unsigned long now = millis();
         
-        if (!gameStarted) {
-            RFIDTag *gameStartTag = new RFIDTag(tagIdsForGameStartFish[0], 4); // 4 bytes in each RFID tag
+        if (!gameInProgress) {
 
             // Check each post for game start fish
             for (uint8_t i=0; i<NUM_POSTS; i++) {
-                if(posts[i]->isFishPresentWithTag(gameStartTag)) {
-                    gameStarted = true;
+                if(posts[i]->currentFishMatches(gameStartTag[0])) {
+                    gameInProgress = true;
                     gameStatusChanged = true;
 #ifdef DO_DEBUG
                     Serial.println("Game Started (detected game start fish)");
@@ -584,13 +637,14 @@ public:
             }
         } else {
             //normal game processing here
+            
             // We have a WINNER if we go past the final sequence
             if (currentSequencePosition >= SOLUTION_SEQUENCE_LENGTH-1 && ((millis() - lastLightTime) > gracePeriod)) {
 #ifdef DO_DEBUG
                 Serial.println("WINNER, WINNER, WINNER!");
 #endif
-                this->posts[0]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
-                this->reset();
+                posts[0]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
+                reset();
                 return;
             }
 
@@ -599,6 +653,24 @@ public:
     
     bool getGameStatusChanged() {
         return gameStatusChanged;
+    }
+    
+    void processStartGame() {
+        gameActivated = true;
+    }
+    
+    void processGameLoop() {
+        if (!gameActivated) {
+            return;
+        }
+        gameStatusChanged = scanForFish();
+        
+        if (!gameInProgress) {
+            seekStartFish();
+            return;
+        }
+        lightNextPost();
+        updateGameStatus(); //if game has not yet started, watch for game start fish
     }
 
 };
@@ -658,25 +730,40 @@ void errorHandler(uint8_t code, uint8_t data) {
 }
 
 void initializeFishSortingGame () {
+#ifdef DO_DEBUG
+    Serial.println("\nBegin Fish Sorting Game initialization.");
+#endif
     //Spawn fish for each Species. Each species (color) has multiple fish (RFID tags).
     FishSpecies *newSpecies = NULL;
-    for (int i=0; i<fishSpeciesColorId::NUM_FISH_SPECIES; i++) {
-#ifdef DO_DEBUG
-        Serial.print("\nAdding Fish Species ");
-        Serial.print(i);
-        Serial.print(" with tags: ");
-#endif
+    for (int i=0; i<NUM_FISH_SPECIES; i++) {
         newSpecies = new FishSpecies(i);
+#ifdef DO_DEBUG
+        Serial.flush();
+        Serial.print("\nAdding ");
+        Serial.print(i+1);
+        Serial.print(" of ");
+        Serial.print(NUM_FISH_SPECIES);
+        Serial.print(" fish species with ");
+        Serial.print(NUM_FISH_PER_SPECIES);
+        Serial.print(" fish and id ");
+        Serial.println(newSpecies->getId());
+        newSpecies->printToSerial();
+#endif
         for (int j=0; j<NUM_FISH_PER_SPECIES; j++) {
 #ifdef DO_DEBUG
+            Serial.print(" - adding fish ");
             Serial.println(j);
-            Serial.print(" ");
 #endif
             newSpecies->addKnownTag(new RFIDTag(tagIdsForFishSpeciesColorId[i][j], 4)); // 4 bytes in each RFID tag
         }
-        fsGame->addFishSpecies(newSpecies);
+        //fsGame->addFishSpecies(newSpecies);
+#ifdef DO_DEBUG
+        Serial.print(" done.");
+#endif
     }
-    
+#ifdef DO_DEBUG
+    Serial.println("\nEnd Fish Sorting Game initialization.");
+#endif
 }
 
 // **********************************************************************************
@@ -685,20 +772,24 @@ void initializeFishSortingGame () {
 void setup() {
     // Initialize serial communications with the PC
     Serial.begin(9600);
+    SPI.begin(); // Init SPI bus to communicate with RFID cards
     while (!Serial);    // Do nothing if no serial port is opened (added for Arduinos based on ATMEGA32U4)
     
 #ifdef DO_DEBUG
-    Serial.println("Setup started.");
+    Serial.println(F("Setup started."));
 #endif
-    
+
     fsGame = new FishSortingGame();
 
     initializeFishSortingGame();
-    
-#ifdef DO_DEBUG
-    Serial.println("Setup finished.");
+
+#ifdef GAME_START_EVENT_NOT_REQUIRED
+    fsGame->processStartGame();
 #endif
     
+#ifdef DO_DEBUG
+    Serial.println("\nSetup finished.");
+#endif
 }
 
 // **********************************************************************************
@@ -711,9 +802,11 @@ void loop() {
     doComm();
 #endif
     
-    fsGame->lightNextPost();
-    fsGame->scanForFish();
-    fsGame->updateGameStatus(); //if game has not yet started, watch for game start fish
+//#ifdef DO_DEBUG
+//    Serial.print(".");
+//#endif
+    
+    fsGame->processGameLoop();
     
 #ifdef DO_DEBUG
     if ( fsGame->getGameStatusChanged() || (millis() - fsGame->lastPrintTime) > 5000) {
