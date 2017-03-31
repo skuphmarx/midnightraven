@@ -175,7 +175,23 @@ public:
         return clearFlag;
     }
     
-    bool operator==(const RFIDTag& tag) {
+    bool RFIDTag::operator==(const RFIDTag &tag) const {
+#ifdef DO_DEBUG
+        Serial.print(F("Comparing tags: "));
+        Serial.print(size);
+        Serial.print(F("=="));
+        Serial.print(tag.size);
+        Serial.print(F(", "));
+        Serial.print(clearFlag);
+        Serial.print(F("=="));
+        Serial.print(tag.clearFlag);
+        Serial.print(F(", "));
+        printIdToSerial();
+        Serial.print(F("=="));
+        tag.printIdToSerial();
+        Serial.println();
+#endif
+
         return (size == tag.size) &&
         (clearFlag == tag.clearFlag) &&
         (memcmp(id, tag.id, size) == 0);
@@ -368,15 +384,14 @@ public:
     }
     
     void reset() {
-#ifdef DO_DEBUG
-        Serial.print("Reseting post ");
-        Serial.println(id);
-#endif
         pixelLight->reset();
     }
 
     bool scanForFish() {
         if (rfidReader->isTagDataAvailable()) {
+//#ifdef DO_DEBUG
+//            Serial.println("isTagDataAvailable: true ");
+//#endif            
             return rfidReader->processTagUpdate(&rfidReader->uid);
         }
         return false;
@@ -388,13 +403,16 @@ public:
     
     bool currentFishMatches (RFIDTag *tag) {
 #ifdef DO_DEBUG
-        Serial.print("Scanning post ");
+        Serial.print("Checking post ");
         Serial.print(id);
-        Serial.print(" for fish with tag ");
+        Serial.print(" for fish with tag");
         tag->printIdToSerial();
-        Serial.println();
+        Serial.print(" and found");
+        rfidReader->getCurrentTag()->printIdToSerial();
+        Serial.print(" match? ");
+        Serial.println(tag->isEqualId(&rfidReader->uid));
 #endif
-        return (tag == rfidReader->getCurrentTag());
+        return (tag->isEqualId(&rfidReader->uid));
     }
     
     unsigned long getTimeLastUpdated() {
@@ -443,12 +461,8 @@ class FishSpecies {
 public:
     
     FishSpecies( int speciesId ) {
-        Serial.print(speciesId);
         id = speciesId;
-        Serial.print(id);
         color = rgbColorforFishSpeciesColorId[speciesId];
-        Serial.print(speciesId);
-        Serial.print(id);
     }
     
     int getId() {
@@ -486,7 +500,7 @@ public:
         Serial.print(color.g);
         Serial.print(", ");
         Serial.print(color.b);
-        Serial.println(")");
+        Serial.print(")");
     }
 };
 
@@ -509,9 +523,10 @@ class FishSortingGame {
     fishSpeciesColorId colorSequence[SOLUTION_SEQUENCE_LENGTH] = { red, yellow, green, blue, blue, green, yellow, red, red, green };
     
     int currentSequencePosition = 0;
+    int lastLitPost = -1;
     unsigned long lastLightTime = 0;
     
-    FishSpecies *fishSpecies[NUM_FISH_SPECIES]; //@FIXME: I can remove the fishSpeciesColorId::
+    FishSpecies *fishSpecies[NUM_FISH_SPECIES];
     int numFishSpecies = 0; //Number of Fish known to this game
     
     Post *posts[NUM_POSTS];
@@ -568,7 +583,7 @@ public:
             Serial.println("Lighting Game Start sequence");
 #endif
             //This should probably flash all posts, not just the first one
-            posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
+            posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[green]);
             lastLightTime = millis();
             return;
         }
@@ -577,20 +592,20 @@ public:
 #ifdef DO_DEBUG
             Serial.println("Timeout. No correct fish scanned within grace period.");
 #endif
-            //This should probably flash all posts, not just the current one.
-            posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::red]);
+            //@FIXME: This should probably flash all posts, not just the current one.
+            posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[red]);
             posts[postSequence[currentSequencePosition]]->reset();
             currentSequencePosition = 0;
+            lastLitPost = -1;
             lastLightTime = 0;
             delay(2000); // Two second pause before restarting the game
             return;
         }
         
-        posts[postSequence[currentSequencePosition]]->light(rgbColorforFishSpeciesColorId[colorSequence[currentSequencePosition]]);
-#ifdef DO_DEBUG
-            Serial.print("Lighting post at sequence ");
-            Serial.println(currentSequencePosition);
-#endif
+        if (lastLitPost < currentSequencePosition) {
+            lastLitPost = currentSequencePosition;
+            posts[postSequence[currentSequencePosition]]->light(rgbColorforFishSpeciesColorId[colorSequence[currentSequencePosition]]);
+        }
     }
 
     bool scanForFish() {
@@ -609,7 +624,7 @@ public:
                 if ((now - posts[i]->getTimeLastUpdated()) > 2000 ) {
                     posts[i]->clearCurrentTag();
                     gameStatusChanged = true;
-                } else if (gameStatusChanged && posts[i]->currentFishMatches(gameStartTag[0])) {
+                } else if (!gameInProgress && (posts[i]->currentFishMatches(gameStartTag[0]) || posts[i]->currentFishMatches(gameStartTag[1]))) {
                         gameInProgress = true;
         #ifdef DO_DEBUG
                         Serial.println("Game Started (detected game start fish)");
@@ -627,7 +642,11 @@ public:
 
             // Check each post for game start fish
             for (uint8_t i=0; i<NUM_POSTS; i++) {
-                if(posts[i]->currentFishMatches(gameStartTag[0])) {
+#ifdef DO_DEBUG
+                Serial.print("checking for game start fish on post )");
+                Serial.println(i);
+#endif
+                if(posts[i]->currentFishMatches(gameStartTag[0]) || posts[i]->currentFishMatches(gameStartTag[1])) {
                     gameInProgress = true;
                     gameStatusChanged = true;
 #ifdef DO_DEBUG
@@ -637,6 +656,7 @@ public:
             }
         } else {
             //normal game processing here
+            //@FIXME: game logic goes here. Check for incorrect species on any post. Check for correct species on lit post.
             
             // We have a WINNER if we go past the final sequence
             if (currentSequencePosition >= SOLUTION_SEQUENCE_LENGTH-1 && ((millis() - lastLightTime) > gracePeriod)) {
@@ -664,7 +684,9 @@ public:
             return;
         }
         gameStatusChanged = scanForFish();
-        
+#ifdef DO_DEBUG
+        gameStatusChanged ? Serial.println("Found a new fish!") : (0) ;
+#endif
         if (!gameInProgress) {
             seekStartFish();
             return;
@@ -673,6 +695,23 @@ public:
         updateGameStatus(); //if game has not yet started, watch for game start fish
     }
 
+    void printCurrentGameStatus() {
+        Serial.print("Fish Sorting Game: Active? ");
+        Serial.print(gameActivated);
+        Serial.print(" InProgress? ");
+        Serial.print(gameInProgress);
+        Serial.print(" StatusChanged? ");
+        Serial.print(gameStatusChanged);
+        Serial.print(" game at sequence ");
+        Serial.print(currentSequencePosition);
+        Serial.print(" of ");
+        Serial.print(SOLUTION_SEQUENCE_LENGTH);
+        Serial.print(" with ");
+        Serial.print(millis()-lastLightTime);
+        Serial.print(" millis of ");
+        Serial.print(gracePeriod);
+        Serial.println();
+    }
 };
 FishSortingGame* fsGame; // This is the main game object
 
@@ -739,30 +778,21 @@ void initializeFishSortingGame () {
         newSpecies = new FishSpecies(i);
 #ifdef DO_DEBUG
         Serial.flush();
-        Serial.print("\nAdding ");
-        Serial.print(i+1);
+        Serial.print("Adding ");
+        newSpecies->printToSerial();
         Serial.print(" of ");
         Serial.print(NUM_FISH_SPECIES);
         Serial.print(" fish species with ");
         Serial.print(NUM_FISH_PER_SPECIES);
-        Serial.print(" fish and id ");
-        Serial.println(newSpecies->getId());
-        newSpecies->printToSerial();
+        Serial.println(" fish");
 #endif
         for (int j=0; j<NUM_FISH_PER_SPECIES; j++) {
-#ifdef DO_DEBUG
-            Serial.print(" - adding fish ");
-            Serial.println(j);
-#endif
             newSpecies->addKnownTag(new RFIDTag(tagIdsForFishSpeciesColorId[i][j], 4)); // 4 bytes in each RFID tag
         }
-        //fsGame->addFishSpecies(newSpecies);
-#ifdef DO_DEBUG
-        Serial.print(" done.");
-#endif
+        fsGame->addFishSpecies(newSpecies);
     }
 #ifdef DO_DEBUG
-    Serial.println("\nEnd Fish Sorting Game initialization.");
+    Serial.println("End Fish Sorting Game initialization.");
 #endif
 }
 
@@ -788,7 +818,7 @@ void setup() {
 #endif
     
 #ifdef DO_DEBUG
-    Serial.println("\nSetup finished.");
+    Serial.println("Setup complete.\n");
 #endif
 }
 
@@ -802,26 +832,15 @@ void loop() {
     doComm();
 #endif
     
-//#ifdef DO_DEBUG
-//    Serial.print(".");
-//#endif
-    
     fsGame->processGameLoop();
     
 #ifdef DO_DEBUG
     if ( fsGame->getGameStatusChanged() || (millis() - fsGame->lastPrintTime) > 5000) {
-        printCurrentGameStatus();
+        fsGame->printCurrentGameStatus();
         fsGame->lastPrintTime = millis();
     }
 #endif
     
-}
-
-// **********************************************************************************
-// Helper routine to print game status
-// **********************************************************************************
-void printCurrentGameStatus() {
-    Serial.println(F("**Current game status:"));
 }
 
 // **********************************************************************************
