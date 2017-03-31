@@ -91,9 +91,12 @@ static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xE6, 0xD3, 0x2D, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 6.1, 6.2
   { {0xF2, 0x92, 0x83, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 7.1, 7.2
   { {0x86, 0xF0, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 8.1, 8.2
-  { {0x92, 0x0F, 0x43, 0x6D}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
+//  { {0x92, 0x0F, 0x43, 0x6D}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
+  { {0xC4, 0xBE, 0xF7, 0xF4}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
   { {0xF4, 0x68, 0x9B, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // 10.1, 10.2
 };
+
+// TODO:  Put business card here for repeat.  Or maybe just use any unrecognized tag?
 
 // Audio Tracks
 #define BASE_AUDIO_TRACK_ID              20
@@ -885,8 +888,12 @@ void receiveCommEvent() {
       reset();
 //      respondAckToSender();
       break;
+    case CE_START_PUZZLE: 
     case CE_RESET_AND_START_PUZZLE:
+    Serial.println(F("Recieve Puzzle Start Event"));    
+      Serial.println(F("Sending puzzle start success"));
       sendPuzzleStartSuccess();
+      momentaryComm(1000);
       processReceivedStartGame();
 //      respondAckToSender();
       break;
@@ -910,11 +917,13 @@ void receiveCommEvent() {
 
 void reset() {
   mmGameInstance->reset(); 
-  numberOfAttempts = 0; 
+  numberOfAttempts = 0;      
+  mmGameInstance->setGameStarted(false);
   sendEventToNode(MP3_PLAYER_NODE,CE_PLAY_TRACK, "reset40");
 }
 
 void processReceivedStartGame() {
+  momentaryComm(500);
   mmGameInstance->processStartGame();
   // Play the tracks to start the game
   uint8_t  whichSolution = mmGameInstance->getGameSolutionNumber();
@@ -925,6 +934,9 @@ void processReceivedStartGame() {
     startTrack = "track13";
   }
   sendAudioEvent(startTrack);
+
+  // TODO we should probably just do comm here for the length of the track and then start looking at the RFIDs
+  momentaryComm(90000); // The track is about 2 minutes so wait 1:30
 }
 
 //Sample Error Handler
@@ -1060,7 +1072,7 @@ void processSendEvents(MasterMindFlowerPotGame* mmGame) {
   }  
   
 }
-//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // The game is complete. Perform all the necessary actions and tell the controller node of this amazing feat.
 void gameCompleted() {
       if(numberOfAttempts <= 5) {
@@ -1069,12 +1081,10 @@ void gameCompleted() {
          sendAudioEvent(AUDIO_ALL_CORRECT_GUESS_SLOW);
       }
       // Do comm for the length of the track and then tell the node you are done
-      unsigned long startTime = millis();
-      while(millis() - startTime < 10000) {
-        doComm();
-      }
+      momentaryComm(10000);
       sendControllerImportantEvent(CE_PUZZLE_COMPLETED,CE_PUZZLE_COMPLETED_SUCCESS,MASTER_MIND_POT_GAME_NODE);
-      
+      mmGameInstance->setGameStarted(false);
+      reset();
 }
 
 void chooseAndSendAudioEvent(String track1, String track2) {
@@ -1094,6 +1104,15 @@ void sendAudioEvent(String audioId) {
   Serial.println(audioId);
 #endif  
   sendEventToNode(AUDIO_NODE, CE_PLAY_TRACK, audioId);
+
+    momentaryComm(500);
+}
+
+void momentaryComm(unsigned int len) {
+   unsigned long start = millis();
+   while((millis() - start) < len) {
+      doComm();
+   }
 }
 
 

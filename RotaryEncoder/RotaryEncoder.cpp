@@ -24,6 +24,14 @@ void RotaryEncoder :: reset() {
   this->lastTurnClockwise = true;
 }
 
+void RotaryEncoder :: setDebounce(int val) {
+    debounce = val;
+}
+
+void RotaryEncoder :: setClicksTillRollover(int val) {
+    clicksTillRollover = val;
+}
+
 bool RotaryEncoder :: hasValueChanged() {
  bool ret = false;
  unsigned long checkTime = millis();
@@ -33,7 +41,7 @@ bool RotaryEncoder :: hasValueChanged() {
     if ((aVal != this->clkPinLast)&&(aVal==LOW) ) { 
   
         int bVal = digitalRead(this->dtPin);
-        if(  ( (bVal != aVal && !this->lastTurnClockwise) || (bVal == aVal && this->lastTurnClockwise) ) && ((checkTime - lastTurnTime) < 15) ) {
+        if(  ( (bVal != aVal && !this->lastTurnClockwise) || (bVal == aVal && this->lastTurnClockwise) ) && ((checkTime - lastTurnTime) < debounce) ) {
           Serial.println("TOO FAST");
           bVal = !bVal;
         }

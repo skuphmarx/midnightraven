@@ -25,11 +25,13 @@
 
 void loop() {
   // put your main code here, to run repeatedly:
-  int currentValue = wheel->getClickValue();
-  if(lastValue != currentValue) {
-    Serial.print(F("Current value="));
-    Serial.println(currentValue);
-    lastValue=currentValue;
+  if(wheel->hasValueChanged()) {
+   int currentValue = wheel->getClickValue();
+   if(lastValue != currentValue) {
+     Serial.print(F("Current value="));
+     Serial.println(currentValue);
+     lastValue=currentValue;
+   }
   }
 
 }

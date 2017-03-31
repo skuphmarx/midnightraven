@@ -3,6 +3,9 @@
 #include <SPI.h>
 #include <RFID.h>
 
+#include <MFRC522.h>
+//#include <GameRFIDReader.h>
+
  //
  // This is the main GameController node. it will have an RFID reader attached to it and will read various cards and send
  // events.
@@ -16,11 +19,11 @@
 static byte START_GAME[5] = {43,143,6,197,103};          // START GAME
 static byte RESET_GAME[5] =  {203,251,253,196,9};          // RESET GAME
 static byte RESET_DOOR_KNOCKER_NODE[5] ={59,144,6,197,104};                // RESET Door Knocker Node
-static byte RESET_AND_START_DOOR_KNOCKER_NODE[5] ={123,232,6,197,80};      // Reset and start Door knocker node
+static byte RESET_AND_START_DOOR_KNOCKER_NODE[5] ={235,156,253,196,78};      // Reset and start Door knocker node
 static byte RESET_MP3_PLAYER_NODE[5]=  {235,156,32,197,146};                    // RESET MP3_PLAYER_NODE
 static byte RESET_AND_START_MP3_PLAYER_NODE[5]=  {27,152,6,197,64};          // RESET and start MP3_PLAYER_NODE
-static byte RESET_MASTER_MIND_POT_GAME_NODE[5] = {5,5,5,5,5};           // RESET MASTER_MIND_POT_GAME_NODE
-static byte RESET_AND_START_MASTER_MIND_POT_GAME_NODE[5] = {5,5,5,5,5}; // RESET and start MASTER_MIND_POT_GAME_NODE
+static byte RESET_MASTER_MIND_POT_GAME_NODE[5] = {123,28,254,196,93};           // RESET MASTER_MIND_POT_GAME_NODE
+static byte RESET_AND_START_MASTER_MIND_POT_GAME_NODE[5] = {91,140,32,197,50}; // RESET and start MASTER_MIND_POT_GAME_NODE
 static byte RESET_FISH_SORTING_GAME_NODE[5] = {4,4,4,4,5};              // RESET FISH_SORTING_GAME_NODE
 static byte RESET_AND_START_FISH_SORTING_GAME_NODE[5]=  {4,4,4,4,5};    // RESET and start FISH_SORTING_GAME_NODE
 static byte RESET_DOCK_PLANKS_GAME_NODE[5] = {4,4,4,4,5};               // RESET DOCK_PLANKS_GAME_NODE
@@ -36,6 +39,7 @@ unsigned long delayBetweenSameCardRead = 10000;  // 10 seconds
 bool puzzleStartedSuccessfully = false;
 #define MAX_SEND_RETRYS 5     // Retry to send a message 5 times. If no success something very bad happened
 
+//#define SHOW_TAG_NUMBER 1
 /* RFID Related setup
   * 3V -> VCC  NOTE 3V NOT 5V  RED
   * GND -> GND                 BLACK
@@ -67,13 +71,17 @@ void setup() {
       SPI.begin();
       rfid.init();
 
-      resetControllerNode();
+//      resetControllerNode();
 
 
-      Serial.println("NODE READY. Starting Game");
+      Serial.println("NODE READY. Waiting for Start Game tag");
 
-      sendStartGameEvent(DOOR_KNOCKER_NODE); // To start the entire game
+//      sendStartGameEvent(DOOR_KNOCKER_NODE); // To start the entire game
 }
+
+
+
+
 
 void resetControllerNode() {
      Serial.println("Restting Game Controller");
@@ -152,7 +160,7 @@ void resetAllNodes() {
 //   performSend(0, CE_RESET_NODE,"");  //PJON_BROADCAST=0 but for some reason not defined here
    doResetNode(MP3_PLAYER_NODE);
    doResetNode(DOOR_KNOCKER_NODE);
-//   doResetNode(MASTER_MIND_POT_GAME_NODE);
+   doResetNode(MASTER_MIND_POT_GAME_NODE);
 //   doResetNode(FISH_SORTING_GAME_NODE);
 //   doResetNode(DOCK_PLANKS_GAME_NODE);
 //   doResetNode(LICENSE_PLATE_GAME_NODE);
@@ -184,16 +192,23 @@ void loop() {
 // See if one of the known tags is detected and if so trigger the appropriate event
 void checkForTag() {
    if(tagPresent()) {
+    Serial.println("TAG PRESENT");
     if(isDesiredTag(RESET_GAME)) {
       resetControllerNode();
     } else if(isDesiredTag(START_GAME)) {
      // What do we need to do to start here?
+      resetControllerNode();
+      sendStartGameEvent(DOOR_KNOCKER_NODE); // To start the entire game
     } else if(isDesiredTag(RESET_DOOR_KNOCKER_NODE)) {
        performSend(DOOR_KNOCKER_NODE,CE_RESET_NODE,"");
     } else if(isDesiredTag(RESET_AND_START_DOOR_KNOCKER_NODE)) {
        performSend(DOOR_KNOCKER_NODE,CE_RESET_AND_START_PUZZLE,"");
     } else if(isDesiredTag(RESET_MP3_PLAYER_NODE)) {
       performSend(MP3_PLAYER_NODE, CE_RESET_NODE,"");
+    } else if(isDesiredTag(RESET_AND_START_MASTER_MIND_POT_GAME_NODE)) {
+      performSend(MASTER_MIND_POT_GAME_NODE, CE_RESET_AND_START_PUZZLE,"");
+    } else if(isDesiredTag(RESET_MASTER_MIND_POT_GAME_NODE)) {
+      performSend(MASTER_MIND_POT_GAME_NODE, CE_RESET_NODE,"");
     }
    } // End tag is present
 }
@@ -209,6 +224,19 @@ void checkForTag() {
    if(rfid.isCard()){  
      if(rfid.readCardSerial()) {  
        ret = true;
+#ifdef SHOW_TAG_NUMBER
+        Serial.print("RFID Tag number: ");
+                     Serial.print(rfid.serNum[0]);
+                     Serial.print(" ");
+                     Serial.print(rfid.serNum[1]);
+                     Serial.print(" ");
+                     Serial.print(rfid.serNum[2]);
+                     Serial.print(" ");
+                     Serial.print(rfid.serNum[3]);
+                     Serial.print(" ");
+                     Serial.print(rfid.serNum[4]);
+                     Serial.print(" ");
+#endif
      } // End if readCardSerial
    } // End if isCard
    return ret;
