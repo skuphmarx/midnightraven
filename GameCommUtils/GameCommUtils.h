@@ -7,8 +7,9 @@
 
 // Turn on Asynchronous Acknowledgments at the PJON packet level.
 #define INCLUDE_ASYNC_ACK true
-// Set the number of send attempts in PJON - default in library is 42.
-#define MAX_ATTEMPTS 200
+// Set the number of send attempts in PJON - default in library is 42. NO IT ISN'T. WHERE IS THIS?
+//#define MAX_ATTEMPTS 200
+#define SWBB_MAX_ATTEMPTS 200
 #define PJON_INCLUDE_SWBB
 #include <PJON.h>
 
@@ -36,6 +37,7 @@ using namespace std;
 // Events < 50 are typically sent form the CONTROLLER to the PUZZLE. Add 50 to the event to get the event that goes in the opposite direction
 // Events > 50 are typically sent from a PUZZLE to the CONTROLLER  
 #define CE_START_PUZZLE          10
+#define CE_START_SUB_PUZZLE      15      // The Front Door Knocker intervenes between other puzzles
 #define CE_PUZZLE_START_SUCCESS  60      // Event passed from PUZZLE to Game Master
 
 #define CE_RESET_NODE			 11
