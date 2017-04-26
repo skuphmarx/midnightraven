@@ -6,10 +6,11 @@
 #include <SoftwareSerial.h>
 
 // Turn on Asynchronous Acknowledgments at the PJON packet level.
-#define INCLUDE_ASYNC_ACK true
+#define PJON_INCLUDE_ASYNC_ACK true
 // Set the number of send attempts in PJON - default in library is 42. NO IT ISN'T. WHERE IS THIS?
 //#define MAX_ATTEMPTS 200
-#define SWBB_MAX_ATTEMPTS 200
+#define SWBB_MAX_ATTEMPTS 35
+#define PJON_MAX_PACKETS 7
 #define PJON_INCLUDE_SWBB
 #include <PJON.h>
 
@@ -29,6 +30,11 @@ using namespace std;
 #define DOCK_PLANKS_GAME_NODE     60       // Dock planks
 #define LICENSE_PLATE_GAME_NODE   70	   // License plate game. Duh.
 #define HELP_RADIO_NODE           80       // The help radio system. 
+
+// These are things that aren't really nodes(although keypad IS attached to comm) but happen along the way and  have help
+#define CAMPING_GAME              55       // After fishsorting
+#define KEYPAD_GAME_NODE          58       // After camping
+#define TORCH_DOOR_TO_RAVEN       85       // After getting into outhouse
 
 #define COMM_TEST_NODE            94       // Just a node for testing
 
@@ -107,7 +113,7 @@ char intDataBuffer[MAX_EVENT_DATA];
 int thisNode;
 
 eventDataStruct eventData;     // This will be filled after an event is received
-unsigned int responseWaitTime = 10000;  // We will wait 1 seconds for a response
+unsigned int responseWaitTime = 10000;  // We will wait 10 seconds for a response
 bool eventSentSuccessfully = false;  // used for events that need a response. START and COMPLETE mostly
 int importantEventResponse = 0;  // The important event response we are waiting to receive
 
@@ -120,7 +126,7 @@ void processReceive();
 
 
 
-void eventReceivedFromController(uint8_t *payload, uint16_t length, const PacketInfo &packet_info) {
+void eventReceivedFromController(uint8_t *payload, uint16_t length, const PJON_Packet_Info &packet_info) {
 
 #ifdef DO_COMM_UTILS_DEBUG
   Serial.print(F("--RECV len: "));
@@ -318,16 +324,16 @@ void respondSuccessToSender() {
  * PACKETS_BUFFER_FULL - Possible wrong bus configuration. Higher MAX_PACKETS in PJON.h if necessary.
  */
 void error_handler(uint8_t code, uint8_t data) {
-  if(code == CONNECTION_LOST) {
+  if(code == PJON_CONNECTION_LOST) {
     Serial.print(F("Connection with device ID "));
-    Serial.print(data);
+    Serial.print(bus.packets[data].content[0], DEC);
     Serial.println(F(" is lost."));
   }
-  if(code == PACKETS_BUFFER_FULL) {
+  if(code == PJON_PACKETS_BUFFER_FULL) {
     Serial.print(F("Packet buffer full, length: "));
     Serial.println(data, DEC);
   }
-  if(code == CONTENT_TOO_LONG) {
+  if(code == PJON_CONTENT_TOO_LONG) {
     Serial.print(F("Content too long, length: "));
     Serial.println(data);
   }
@@ -358,6 +364,7 @@ void initOverrideComm(int nodeAddress, int commAddress) {
 
   thisNode = nodeAddress;
   bus.set_id(nodeAddress);
+  bus.set_shared_network(false);
   bus.strategy.set_pin(commAddress);
 
 // Set the Async ACK flag
