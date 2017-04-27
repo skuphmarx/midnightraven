@@ -1,7 +1,6 @@
-#include <PJON.h>
-#include <GameCommUtils.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <GameCommUtils.h>
 
 #include <Adafruit_NeoPixel.h>
 #ifdef __AVR__
@@ -14,10 +13,12 @@ using namespace std;
 #define DO_DEBUG
 
 // Uncomment to enable event communications
-//#define DO_GAME_EVENT_COMM
+#define DO_GAME_EVENT_COMM
 
 // Comment this if the game requires a start event to be active
-#define GAME_ACTIVATE_EVENT_NOT_REQUIRED
+//#define GAME_ACTIVATE_EVENT_NOT_REQUIRED
+
+#define FISH_SORTING_COMM_PIN 8   // A0 etc. don't seem to work on Mega, nor do > 13
 
 
 #define READER_INITIAL_RFID_NSS_PIN   4  // RFID pin numbers are sequential starting with this value.
@@ -525,7 +526,7 @@ public:
 class FishSortingGame {
     const static int NUM_POSTS = 3;
     const static int SOLUTION_SEQUENCE_LENGTH = 10;
-    const static unsigned long int INITIAL_GRACE_PERIOD = 50000; // millis to wait for a fish to be placed on post
+    const static unsigned long int INITIAL_GRACE_PERIOD = 50000; // TODO: (change to real value)millis to wait for a fish to be placed on post
     
     unsigned long int gracePeriod = INITIAL_GRACE_PERIOD;
     bool gameStatusChanged = false;
@@ -543,6 +544,9 @@ class FishSortingGame {
     
     FishSpecies *fishSpecies[NUM_FISH_SPECIES];
     int numFishSpecies = 0; //Number of Fish known to this game
+	
+	void (*momentaryComm)(unsigned long);
+
     
     Post *posts[NUM_POSTS];
 
@@ -571,7 +575,8 @@ public:
 #ifdef DO_DEBUG
         Serial.println("Resetting Fish Sorting Game");
 #endif
-        
+        gameActivated = false;
+		gameInProgress = false; // SDK Added this. Is it correct?
         lastLitSequencePosition = -1;
         currentSequencePosition = 0;
         lastLightTime = 0;
@@ -579,7 +584,21 @@ public:
         for (int i=0; i<NUM_POSTS; i++) {
             posts[i]->reset();
         }
+		
+//		initRandomGameSequence();
     }
+	
+	void setMomentaryComm(void (*function)(unsigned long howLong)) {
+        momentaryComm = function;
+    }
+	
+	void gameFailed() {
+	    for (int i=0; i<NUM_POSTS; i++) {
+	        posts[i]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::red]);
+        }
+		reset();
+		activateGame();
+	}
     
     void flashAllPosts(RGBColor color) {
         //Set each individual light to the same color
@@ -590,7 +609,7 @@ public:
         for(int i=0; i<NUM_POSTS; i++) {
             posts[i]->pixel()->show();
         }
-        delay(500);
+        momentaryComm(500);
         
         //Set each individual light to black (off)
         for(int i=0; i<NUM_POSTS; i++) {
@@ -599,7 +618,7 @@ public:
         for(int i=0; i<NUM_POSTS; i++) {
             posts[i]->pixel()->show();
         }
-        delay(250);
+        momentaryComm(250);
     }
 
     void addFishSpecies(FishSpecies *newSpecies) {
@@ -631,7 +650,7 @@ public:
 #endif
             posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[red]);
             reset();
-            delay(2000); // Two second pause before restarting the game
+            momentaryComm(2000); // Two second pause before restarting the game
             return;
         }
         
@@ -664,7 +683,7 @@ public:
                 // This is the amount of time that the tag needs to be off the reader before we acknowledge it.
                 // Need to account for random-ness of when we get updates from the card relative to how often
                 // we "loop".
-                if ((now - posts[i]->getTimeLastUpdated()) > 500 ) {
+                if ((now - posts[i]->getTimeLastUpdated()) > 1000 ) {
                     posts[i]->clearCurrentTag();
                     gameStatusChanged = true;
                 } else if (!gameInProgress && (posts[i]->currentFishMatches(gameStartTag[0]) || posts[i]->currentFishMatches(gameStartTag[1]))) {
@@ -693,7 +712,7 @@ public:
             // This is the amount of time that the tag needs to be off the reader before we acknowledge it.
             // Need to account for random-ness of when we get updates from the card relative to how often
             // we "loop".
-            if ((now - posts[p]->getTimeLastUpdated()) > 500 ) {
+            if ((now - posts[p]->getTimeLastUpdated()) > 1000 ) {
                 posts[p]->clearCurrentTag();
                 gameStatusChanged = true;
                 continue;
@@ -710,6 +729,7 @@ public:
                 Serial.println("FIXME: reset game here **********************************");
 #endif
                 //@FIXME: reset game here
+				gameFailed();
                 gameStatusChanged = true;
                 continue;
             }
@@ -722,6 +742,8 @@ public:
                 Serial.println("FIXME: reset game here **********************************");
 #endif
                 //@FIXME: reset game here
+				
+				gameFailed();
                 gameStatusChanged = true;
                 continue;
             }
@@ -756,6 +778,31 @@ public:
         return gameStatusChanged;
     }
     
+	void initRandomGameSequence() {
+	    for(int i=0;i<SOLUTION_SEQUENCE_LENGTH;i++) {
+		    int pval = random(0,3);  // pick a post
+			postSequence[i] = pval;
+			pval = random(0,4); // Pick a random color
+			switch(pval) {
+			   case 0:
+			   		colorSequence[i] = red;
+			   break;
+			   case 1:
+			   		colorSequence[i] = yellow;
+			   break;
+			   case 2:
+			   		colorSequence[i] = green;
+			   break;
+			   case 3:
+			   		colorSequence[i] = blue;
+			   break;
+			}
+			Serial.print(F("Solution: ")); Serial.print(i);Serial.print(F(" post="));Serial.print(postSequence[i]);
+			Serial.print(F(" color="));Serial.println(colorSequence[i]);
+		}
+
+	}
+	
     void activateGame() {
         gameActivated = true;
     }
@@ -801,12 +848,14 @@ public:
         Serial.println();
     }
 };
+
+bool startTheGame = false;
 FishSortingGame* fsGame; // This is the main game object
 
 // **********************************************************************************
 // Reset
 // **********************************************************************************
-void reset() {
+void resetNode(bool playResetTrack) {
     //This should reset self plus all connected game nodes (if any).
 
 #ifdef DO_DEBUG
@@ -814,7 +863,13 @@ void reset() {
     Serial.println(eventData.data);
 #endif
     
+	// TODO: DO we need this here? Probabaly but can remove from initialize
     fsGame->reset();
+	
+	if(playResetTrack) {
+       playTrack("reset50");
+	}
+
     
 }
 
@@ -824,37 +879,25 @@ void reset() {
 void receiveCommEvent() {
     //use eventData.whatever to get what was sent and switch
     switch (eventData.event) {
-        case CE_RESET_NODE:
-            reset();
-            break;
-        default:
-            ;
+         case CE_RESET_NODE:
+              resetNode(true);
+          break;
+          case CE_START_PUZZLE: 
+          case CE_RESET_AND_START_PUZZLE:
+             startTheGame = true;   // Indicates to call all the game start stuff next loop
+          break;
     }
 }
 
-// **********************************************************************************
-// Sample Error Handler
-// **********************************************************************************
-void errorHandler(uint8_t code, uint8_t data) {
-    if(code == CONNECTION_LOST) {
-        Serial.print("Connection with device ID ");
-        Serial.print(data);
-        Serial.println(" is lost.");
-    } else if(code == PACKETS_BUFFER_FULL) {
-        Serial.print("Packet buffer is full, has now a length of ");
-        Serial.println(data, DEC);
-        Serial.println("Possible wrong bus configuration!");
-        Serial.println("higher MAX_PACKETS in PJON.h if necessary.");
-    } else if(code == CONTENT_TOO_LONG) {
-        Serial.print("Content is too long, length: ");
-        Serial.println(data);
-    } else {
-        Serial.print("Unknown error code received: ");
-        Serial.println(code);
-        Serial.print("With data: ");
-        Serial.println(data);
-    }
+void doStartGame() {
+    resetNode(false);
+    sendPuzzleStartSuccess();
+    momentaryComm(2000);
+    playTrack("start50");
+	fsGame->activateGame();
 }
+
+
 
 void initializeFishSortingGame () {
 #ifdef DO_DEBUG
@@ -885,6 +928,21 @@ void initializeFishSortingGame () {
 #endif
 }
 
+  void momentaryComm(unsigned long howlong) {
+  
+#ifdef DO_DEBUG
+ Serial.println(F("------Momentary Comm START----"));
+#endif
+    unsigned long start = millis();
+    while(millis()-start < howlong) {
+      doComm();
+    }
+	
+#ifdef DO_DEBUG
+ Serial.println(F("------Momentary Comm END----"));
+#endif
+  }
+
 // **********************************************************************************
 // Setup
 // **********************************************************************************
@@ -899,8 +957,18 @@ void setup() {
 #endif
 
     fsGame = new FishSortingGame();
+	fsGame->setMomentaryComm(momentaryComm);
+
+    initOverrideComm(FISH_SORTING_GAME_NODE,FISH_SORTING_COMM_PIN); 
+    setLocalEventHandler(receiveCommEvent);
+
+  // Initialize random seed value. Using pin 0. It is assumed that this pin is not used.
+  // Doing this allows the random method to return a random sequence from one "run" of the
+  // Arduino to the next.
+    randomSeed(analogRead(0));
 
     initializeFishSortingGame();
+	resetNode(true);
 
 #ifdef GAME_ACTIVATE_EVENT_NOT_REQUIRED
     fsGame->activateGame();
@@ -913,12 +981,20 @@ void setup() {
 
 // **********************************************************************************
 // Main Loop
-// **********************************************************************************
+// *****************************************************************************    
+
 void loop() {
+
+    if(startTheGame) {
+	  startTheGame = false;
+	  doStartGame();
+	}
+	
 #ifdef DO_GAME_EVENT_COMM
     doComm();
 #endif
     
+	
     fsGame->processGameLoop();
     
 #ifdef DO_DEBUG
@@ -939,3 +1015,18 @@ void dump_byte_array(byte *buffer, byte bufferSize) {
         Serial.print(buffer[i], HEX);
     }
 }
+
+/***************
+* Play Track. 
+* Just a convenience to send a play track event
+**************/
+  void playTrack(String track) {
+//      sendEventToController(CE_PLAY_TRACK ,rack);  
+      Serial.println(F("Sending event"));
+
+         sendEventToNode(MP3_PLAYER_NODE,CE_PLAY_TRACK, track);
+      
+ 
+  }
+
+
