@@ -1,7 +1,6 @@
-#include <PJON.h>
-#include <GameCommUtils.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <GameCommUtils.h>
 
 #include <Adafruit_NeoPixel.h>
 #ifdef __AVR__
@@ -14,17 +13,21 @@ using namespace std;
 #define DO_DEBUG
 
 // Uncomment to enable event communications
-//#define DO_GAME_EVENT_COMM
+#define DO_GAME_EVENT_COMM
+
+#define SHORT_TRACK_START // If defined it skips most of the start spiel and just does a short version. for debug
 
 // Comment this if the game requires a start event to be active
-#define GAME_START_EVENT_NOT_REQUIRED
+#define GAME_ACTIVATE_EVENT_NOT_REQUIRED
+
+#define FISH_SORTING_COMM_PIN 8   //  was 8  A0 etc. don't seem to work on Mega, nor do > 13
 
 
-#define PIXEL_INITIAL_PIN             4  // Pixel pin numbers are sequential starting with this value.
-#define READER_INITIAL_RFID_NSS_PIN   7  // RFID pin numbers are sequential starting with this value.
-#define RST_PIN                      10  // RFID reset pin. Configurable but shared by all RFID readers
+#define READER_INITIAL_RFID_NSS_PIN   24  // was 4 RFID pin numbers are sequential starting with this value.
+#define RST_PIN                      5  // RFID reset pin. Configurable but shared by all RFID readers
+#define PIXEL_INITIAL_PIN            34  // was 11 Pixel pin numbers are sequential starting with this value.
 
-#define NUM_FISH_PER_SPECIES          2  // Each species has this many individual fish
+#define NUM_FISH_PER_SPECIES          4  // Each species has this many individual fish
 
 struct RGBColor {
     byte r;
@@ -42,25 +45,26 @@ enum fishSpeciesColorId {
 
 RGBColor rgbColorforFishSpeciesColorId[NUM_FISH_SPECIES] = { {150,0,0}, {150,150,0}, {0,150,0}, {0,0,150} };
 
-static const byte tagIdsForFishSpeciesColorId[NUM_FISH_SPECIES][NUM_FISH_PER_SPECIES][4] = {
-    { {0x7A, 0x31, 0x41, 0xD5}, {0xFF, 0xFF, 0xFF, 0xFF} },   // red fish ID's
-    { {0x54, 0x99, 0xDE, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // yellow fish ID's
-    { {0xE6, 0x93, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // green fish ID's
-    { {0xD4, 0x5E, 0x15, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // blue fish ID's
-};
+RGBColor alreadyUsedFishColor = {75,0,130}; //{140,40,220};
+RGBColor whiteRgb = {255,255,255};
+
 
 byte tagIdsForGameStartFish[NUM_FISH_PER_SPECIES][4] = {
     {0x7A, 0x31, 0x41, 0xD5}, {0xFF, 0xFF, 0xFF, 0xFF}   // game start fish ID's
 };
 
+bool startTheGame = false;
+bool testModeOnly = false;
+
 // **********************************************************************************
 // Pixel LED Light String
 // **********************************************************************************
 class PixelLightString {
-    const static int flashDuration = 50;
+    const static int flashDuration = 30;
     
     int lightsPerString;
     int pin;
+	uint32_t currentColor;  // Current color of pixel 0 used to reset if flashing
     Adafruit_NeoPixel *pixel = NULL;
     
     void init () {
@@ -102,18 +106,42 @@ public:
     void flashColor(RGBColor color) {
         flash(pixel->Color(color.r, color.g, color.b), flashDuration);
     }
+	
+	void flashWhite() {
+	   flash(pixel->Color(255,255,255),flashDuration);
+	}
+    
+    void show() {
+        pixel->show();
+    }
+    
+    void setColor(RGBColor color) {
+        for(int i=0; i<lightsPerString; i++) {
+            pixel->setPixelColor(i,pixel->Color(color.r,color.g,color.b));
+        }
+    }
+    
+    void light(RGBColor color) {
+        setColor(color);
+        show();
+    }
     
     void reset () {
         light({0,0,0});
     }
+	
+	void getColor() {
+	   currentColor = pixel->getPixelColor(1);
+	}
     
-    void light(RGBColor color) {
-        for(int i=0; i<lightsPerString; i++) {
-            pixel->setPixelColor(i,pixel->Color(color.r,color.g,color.b));
+	void setFromPreviousColor() {
+
+	    for(int i=0; i<lightsPerString; i++) {
+            pixel->setPixelColor(i,currentColor);
         }
-        pixel->show();
-        delay(100);
-    }
+		
+        show();
+	}
 };
 
 
@@ -127,6 +155,7 @@ class RFIDTag {
     byte size = 0;
     byte id[MAX_ID_BYTES] = { 0, 0, 0, 0 };  // 4 max
     bool clearFlag = true;
+  bool alreadyUsed = false; // When playing the game a tag can only be used once
     
 public:
     
@@ -176,7 +205,7 @@ public:
     }
     
     bool RFIDTag::operator==(const RFIDTag &tag) const {
-#ifdef DO_DEBUG
+#ifdef DO_DEBUG_TAGS
         Serial.print(F("Comparing tags: "));
         Serial.print(size);
         Serial.print(F("=="));
@@ -185,9 +214,9 @@ public:
         Serial.print(clearFlag);
         Serial.print(F("=="));
         Serial.print(tag.clearFlag);
-        Serial.print(F(", "));
+        Serial.print(F(","));
         printIdToSerial();
-        Serial.print(F("=="));
+        Serial.print(F(" =="));
         tag.printIdToSerial();
         Serial.println();
 #endif
@@ -196,7 +225,20 @@ public:
         (clearFlag == tag.clearFlag) &&
         (memcmp(id, tag.id, size) == 0);
     }
+  
+  void setAlreadyUsed() {
+     alreadyUsed = true;
+  }
+  
+  void clearAlreadyUsed() {
+     
+      alreadyUsed = false;
+  }
     
+  bool isAlreadyUsed() {
+      return alreadyUsed;
+    }
+  
     void printIdToSerial() {
         for (byte i=0; i<size; i++) {
             Serial.print(id[i] < 0x10 ? " 0" : " ");
@@ -205,6 +247,7 @@ public:
     }
     
 };
+
 
 // **********************************************************************************
 // Base Game RFID Reader. Contains non game specific methods and state of an individual RFID reader card.
@@ -315,10 +358,10 @@ public:
             timeLastChanged = millis();
             timeLastUpdated = timeLastChanged;
             foundNewTag = true;
-#ifdef DO_DEBUG
-            Serial.println("processTagUpdate");
-            currentRFIDTag->printIdToSerial();
-#endif
+//#ifdef DO_DEBUG
+//            Serial.print("processTagUpdate found:");
+//            currentRFIDTag->printIdToSerial();
+//#endif
         } else if (currentRFIDTag->isEqualId(uid)) {
             timeLastUpdated = millis();
         }
@@ -351,57 +394,75 @@ public:
     
 };
 
+
 // **********************************************************************************
 // Post
 // **********************************************************************************
 class Post {
     //each post contains a string of Pixel LED lights and an RFID reader
-    
-    const static int NUM_PIXELS_PER_POST = 10;
+    const static int NUM_PIXELS_PER_POST=10; // Individual lights in each Pixel light string
 
     int id;
     PixelLightString *pixelLight = NULL;
     PostReader *rfidReader = NULL;
+  RGBColor currentColor = {0,0,0};
     
 public:
     Post ( int postId ) {
         id = postId;
-        Serial.println("@FIXME: All pixel lights on a single pin for now");
-        //pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, postId + PIXEL_INITIAL_PIN);
-        pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, PIXEL_INITIAL_PIN);
+        
 #ifdef DO_DEBUG
-        Serial.print(F("Reader "));
+        Serial.print(F("Post "));
         Serial.print(postId);
-        Serial.print(F(" using pin "));
+        Serial.print(F(" pixel pin "));
+        Serial.print(postId + PIXEL_INITIAL_PIN);
+        Serial.print(F(" reader pin "));
         Serial.print(postId + READER_INITIAL_RFID_NSS_PIN);
         Serial.print(F("."));
 #endif
+        
         rfidReader = new PostReader( postId + READER_INITIAL_RFID_NSS_PIN, RST_PIN);
+        pixelLight = new PixelLightString( NUM_PIXELS_PER_POST, postId + PIXEL_INITIAL_PIN);
+        pixelLight->light({150,0,150});
     }
     
     int getId() {
         return id;
     }
     
+    PixelLightString* pixel() {
+        return pixelLight;
+    }
+    
     void reset() {
         pixelLight->reset();
+    currentColor = {0,0,0};
     }
 
-    bool scanForFish() {
+    bool scanForFishAndSaveCurrent() {
         if (rfidReader->isTagDataAvailable()) {
-//#ifdef DO_DEBUG
-//            Serial.println("isTagDataAvailable: true ");
-//#endif            
             return rfidReader->processTagUpdate(&rfidReader->uid);
         }
         return false;
+    }
+
+    bool testReaderStatus() {
+      if(rfidReader->isTagDataAvailable()) {
+        return true;
+      }
+
+      return false;
     }
     
     bool isFishPresent() {
         return rfidReader->isTagPresent();
     }
     
-    bool currentFishMatches (RFIDTag *tag) {
+    RFIDTag* currentFishTag() {
+        return rfidReader->getCurrentTag();
+    }
+    
+    bool currentFishMatches(RFIDTag *tag) {
 #ifdef DO_DEBUG
         Serial.print("Checking post ");
         Serial.print(id);
@@ -421,7 +482,17 @@ public:
     
     void clearCurrentTag() {
         rfidReader->clearCurrentTag();
+    
     }
+  
+  void setCurrentColorAndLight(RGBColor color) {
+     currentColor = color;
+     light(color);
+  }
+  
+  RGBColor getCurrentColor() {
+     return currentColor;
+  }
 
     
     void light(RGBColor color) {
@@ -429,7 +500,7 @@ public:
         Serial.print("Lighting post ");
         Serial.print(id);
         Serial.print(" on pin ");
-        Serial.print(PIXEL_INITIAL_PIN); //Serial.print(id+PIXEL_INITIAL_PIN);
+        Serial.print(id+PIXEL_INITIAL_PIN);
         Serial.print(" with color (");
         Serial.print(color.r);
         Serial.print(", ");
@@ -443,6 +514,30 @@ public:
     
     void flashColor(RGBColor c) {
         pixelLight->flashColor(c);
+    }
+	
+	void flashWhite() {
+	   pixelLight->flashWhite();
+	}
+
+    void quickFlashColor(RGBColor c) {
+      pixelLight->light(c);
+      delay(400);
+      pixelLight->reset();
+    }
+
+    void quickDoubleFlashColor(RGBColor c) {
+	  pixelLight->getColor(); // This saves the current color in the pixel object
+	  
+      pixelLight->light(c);
+      delay(200);
+      pixelLight->reset();
+      delay(100);
+      pixelLight->light(c);
+      delay(200);
+    // Return to what the color was
+      pixelLight->setFromPreviousColor();
+    
     }
 
 };
@@ -491,6 +586,36 @@ public:
         return false;
     }
     
+  void setNotUsed() {
+          for (int i=0; i<numberKnownTags; i++) {
+                 knownTags[i]->clearAlreadyUsed();
+            }
+  }
+  
+  bool setAlreadyUsedIfMatches(RFIDTag* fish) {
+      bool ret = false;
+      for (int i=0; i<numberKnownTags; i++) {
+            if(*fish == *knownTags[i]) {
+         knownTags[i]->setAlreadyUsed();
+         ret = true;
+         break;
+      }
+        }
+    return ret;
+  }
+  
+  bool isAlreadyUsed(RFIDTag* fish) {
+      bool ret = false;
+      for (int i=0; i<numberKnownTags; i++) {
+            if(*fish == *knownTags[i] && knownTags[i]->isAlreadyUsed()) {
+      Serial.println(F("*********************************ALREADY USED"));
+         ret = true;
+         break;
+      }
+        }
+    return ret;
+  }
+  
     void printToSerial() {
         Serial.print("FishSpecies ");
         Serial.print(id);
@@ -502,7 +627,15 @@ public:
         Serial.print(color.b);
         Serial.print(")");
     }
+  
+  void printUsedTagStatus() {
+      for(int i=0;i<numberKnownTags;i++) {
+       Serial.print(knownTags[i]->isAlreadyUsed()); Serial.print(" ");
+    }
+  }
 };
+
+
 
 // **********************************************************************************
 // Fish Sorting Game
@@ -510,24 +643,31 @@ public:
 class FishSortingGame {
     const static int NUM_POSTS = 3;
     const static int SOLUTION_SEQUENCE_LENGTH = 10;
-    const static int INITIAL_GRACE_PERIOD = 5000; // millis to wait for a fish to be placed on post
-    
-    int gracePeriod = INITIAL_GRACE_PERIOD;
+    const static unsigned long INITIAL_GRACE_PERIOD = 5000; // TODO: (change to real value)millis to wait for a fish to be placed on post
+    const static unsigned long GRACE_INCREMENT = 3000;      // num seconds longer each attempt
+	const static unsigned long MAX_GRACE_PERIOD = 30000;
+    unsigned long gracePeriod = INITIAL_GRACE_PERIOD;
+	unsigned int numberOfAttempts = 0;  // How many times they have tried the game
     bool gameStatusChanged = false;
     bool gameActivated = false; //false until the room tells us we're ready to place via local event
     bool gameInProgress = false; //false until we detect a game start fish on post 0. Stays true until game is solved or is failed
 
-    RFIDTag* gameStartTag[2] = { new RFIDTag(tagIdsForGameStartFish[0], 4), new RFIDTag(tagIdsForGameStartFish[1], 4) }; // 4 bytes in each RFID tag
-    
-    int postSequence[SOLUTION_SEQUENCE_LENGTH] = {0, 1, 2, 0, 1, 2, 0, 1, 2, 1};
+//    RFIDTag* gameStartTag[2] = { new RFIDTag(tagIdsForGameStartFish[0], 4), new RFIDTag(tagIdsForGameStartFish[1], 4) }; // 4 bytes in each RFID tag
+    RFIDTag gameStartTag[2] = { RFIDTag(tagIdsForGameStartFish[0], 4), RFIDTag(tagIdsForGameStartFish[1], 4) }; // 4 bytes in each RFID tag
+
+  
+    int postSequence[SOLUTION_SEQUENCE_LENGTH] = {0, 1, 2, 0, 1, 2, 0, 1, 2, 0};
     fishSpeciesColorId colorSequence[SOLUTION_SEQUENCE_LENGTH] = { red, yellow, green, blue, blue, green, yellow, red, red, green };
     
     int currentSequencePosition = 0;
-    int lastLitPost = -1;
+    int lastLitSequencePosition = -1;
     unsigned long lastLightTime = 0;
     
     FishSpecies *fishSpecies[NUM_FISH_SPECIES];
     int numFishSpecies = 0; //Number of Fish known to this game
+  
+  void (*momentaryComm)(unsigned long);
+
     
     Post *posts[NUM_POSTS];
 
@@ -535,13 +675,13 @@ class FishSortingGame {
 
         //RFID Initialization
 #ifdef DO_DEBUG
-        Serial.println("Begin RFID initialization.");
+        Serial.println("Begin Post (Pixel+RFID) initialization.");
 #endif
         for (int i=0; i<NUM_POSTS; i++) {
             posts[i] = new Post(i);
         }
 #ifdef DO_DEBUG
-        Serial.println("Finished RFID initialization.");
+        Serial.println("Finished Post (Pixel+RFID) initialization.");
 #endif
     }
 
@@ -556,12 +696,57 @@ public:
 #ifdef DO_DEBUG
         Serial.println("Resetting Fish Sorting Game");
 #endif
+        gameActivated = false;
+        gameInProgress = false; // SDK Added this. Is it correct?
+        lastLitSequencePosition = -1;
         currentSequencePosition = 0;
         lastLightTime = 0;
         gameStatusChanged = false;
         for (int i=0; i<NUM_POSTS; i++) {
             posts[i]->reset();
         }
+		numberOfAttempts++;
+    
+        clearUsedFish();
+    
+        initRandomGameSequence();
+    }
+  
+  void setMomentaryComm(void (*function)(unsigned long howLong)) {
+        momentaryComm = function;
+    }
+  
+  void gameFailed() {
+      for (int i=0; i<NUM_POSTS; i++) {
+	  Serial.println(F("FLASHING POST"));
+          posts[i]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::red]);
+        }
+    reset();
+    activateGame();
+	if(gracePeriod < MAX_GRACE_PERIOD) {
+	    gracePeriod += GRACE_INCREMENT;
+	}
+  }
+    
+    void flashAllPosts(RGBColor color) {
+        //Set each individual light to the same color
+        for(int i=0; i<NUM_POSTS; i++) {
+            posts[i]->pixel()->setColor(color);
+        }
+        //Show each post
+        for(int i=0; i<NUM_POSTS; i++) {
+            posts[i]->pixel()->show();
+        }
+        momentaryComm(500);
+        
+        //Set each individual light to black (off)
+        for(int i=0; i<NUM_POSTS; i++) {
+            posts[i]->pixel()->setColor({0,0,0});
+        }
+        for(int i=0; i<NUM_POSTS; i++) {
+            posts[i]->pixel()->show();
+        }
+        momentaryComm(250);
     }
 
     void addFishSpecies(FishSpecies *newSpecies) {
@@ -574,16 +759,15 @@ public:
     }
     
     void lightNextPost () {
-        if (!gameInProgress) {
-            return;
-        }
-        
+
         if (lastLightTime == 0) {
 #ifdef DO_DEBUG
             Serial.println("Lighting Game Start sequence");
 #endif
-            //This should probably flash all posts, not just the first one
-            posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[green]);
+            //Flash all posts to kick off the game
+            for (int i=0; i<3; i++) {
+                flashAllPosts(whiteRgb);
+            }
             lastLightTime = millis();
             return;
         }
@@ -592,183 +776,433 @@ public:
 #ifdef DO_DEBUG
             Serial.println("Timeout. No correct fish scanned within grace period.");
 #endif
-            //@FIXME: This should probably flash all posts, not just the current one.
-            posts[postSequence[currentSequencePosition]]->flashColor(rgbColorforFishSpeciesColorId[red]);
-            posts[postSequence[currentSequencePosition]]->reset();
-            currentSequencePosition = 0;
-            lastLitPost = -1;
-            lastLightTime = 0;
-            delay(2000); // Two second pause before restarting the game
+//      Flash the post we were waiting on once.
+            posts[postSequence[currentSequencePosition]]->flashWhite();
+
+            gameFailed();
+          //  reset();
+         //   momentaryComm(2000); // Two second pause before restarting the game
             return;
         }
         
-        if (lastLitPost < currentSequencePosition) {
-            lastLitPost = currentSequencePosition;
-            posts[postSequence[currentSequencePosition]]->light(rgbColorforFishSpeciesColorId[colorSequence[currentSequencePosition]]);
+        if (lastLitSequencePosition < currentSequencePosition) {
+            if (lastLitSequencePosition >= 0) {
+                posts[postSequence[lastLitSequencePosition]]->light({0,0,0});
+            }
+            lastLitSequencePosition = currentSequencePosition;
+            posts[postSequence[currentSequencePosition]]->setCurrentColorAndLight(rgbColorforFishSpeciesColorId[colorSequence[currentSequencePosition]]);
         }
     }
 
-    bool scanForFish() {
+    bool scanPostsForFish() {
         bool foundAtLeastOneNewTag = false;
         for (uint8_t i=0; i<NUM_POSTS; i++) {
-            foundAtLeastOneNewTag = posts[i]->scanForFish() || foundAtLeastOneNewTag;
+            foundAtLeastOneNewTag = posts[i]->scanForFishAndSaveCurrent() || foundAtLeastOneNewTag;
         }
         return foundAtLeastOneNewTag;
     }
     
+//
+// TODO: Only seek on post 1 (closest to tree/porch)
     void seekStartFish() {
         unsigned long now = millis();
+#ifdef DO_DEBUG
+    //    Serial.println("seekStartFish");
+#endif
         // Check each post for game start fish
         for (uint8_t i=0; i<NUM_POSTS; i++) {
             if(posts[i]->isFishPresent()) {
-                if ((now - posts[i]->getTimeLastUpdated()) > 2000 ) {
+      Serial.println(F("FISH PRESENT"));
+                // Check the timeout for last update from the reader. Clear if we have exceeded the timeout.
+                // This is the amount of time that the tag needs to be off the reader before we acknowledge it.
+                // Need to account for random-ness of when we get updates from the card relative to how often
+                // we "loop".
+                if ((now - posts[i]->getTimeLastUpdated()) > 1000 ) {
                     posts[i]->clearCurrentTag();
                     gameStatusChanged = true;
-                } else if (!gameInProgress && (posts[i]->currentFishMatches(gameStartTag[0]) || posts[i]->currentFishMatches(gameStartTag[1]))) {
+                } else if (!gameInProgress && (posts[i]->currentFishMatches(&gameStartTag[0]) || posts[i]->currentFishMatches(&gameStartTag[1]))) {
                         gameInProgress = true;
         #ifdef DO_DEBUG
                         Serial.println("Game Started (detected game start fish)");
         #endif
+                    break;
                 }
             }
         }
     }
+  
+  void clearUsedFish() {
+  Serial.println(F("CLEARING USED FISH"));
+      for(int i=0;i<numFishSpecies;i++) {
+        fishSpecies[i]->setNotUsed();
+    }
+  }
+  
+  
+  void foundCorrectFishOnPost(RFIDTag *foundFish) {
+#ifdef DO_DEBUG
+            Serial.print("FOUND CORRECT FISH!!! on post ");
+            Serial.println(postSequence[currentSequencePosition]);
+#endif
 
-    void updateGameStatus() {
+      // Store this fish as we cannot use it again
+            setFishAlreadyUsed(foundFish);
+
+            gameStatusChanged = true;
+            currentSequencePosition++;
+			
+	//		delay(500);  // Delay a half second as that will indicate fish removed. What about if it's just lying there?
+            lastLightTime = millis();
+      
+  }
+  
+  void setFishAlreadyUsed(RFIDTag *foundFish) {
+      for(int i=0;i<numFishSpecies;i++) {
+        if(fishSpecies[i]->setAlreadyUsedIfMatches(foundFish)) {
+         break;
+      }
+    }
+  }
+  
+  bool isFishAlreadyUsed(RFIDTag *foundFish) {
+      bool ret = false;
+    
+      for(int i=0;i<numFishSpecies;i++) {
+        if(fishSpecies[i]->isAlreadyUsed(foundFish)) {
+         ret = true;
+         break;
+      }
+    }
+     
+      return ret;
+  }
+
+    void gameCompleted() {
+  
+       posts[0]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
+       posts[1]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
+       posts[2]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
+
+       reset();
+       gameInProgress = false;
+	   numberOfAttempts = 0;
+       sendControllerImportantEvent(CE_PUZZLE_COMPLETED,CE_PUZZLE_COMPLETED_SUCCESS,FISH_SORTING_GAME_NODE);
+
+
+    } 
+
+    void updateGameStatus(bool somethingNewHappened) {
         gameStatusChanged = false;
         unsigned long now = millis();
+		
+//		Serial.println(F("UpdateGameStatus================================================================"));
         
-        if (!gameInProgress) {
-
-            // Check each post for game start fish
-            for (uint8_t i=0; i<NUM_POSTS; i++) {
-#ifdef DO_DEBUG
-                Serial.print("checking for game start fish on post )");
-                Serial.println(i);
-#endif
-                if(posts[i]->currentFishMatches(gameStartTag[0]) || posts[i]->currentFishMatches(gameStartTag[1])) {
-                    gameInProgress = true;
-                    gameStatusChanged = true;
-#ifdef DO_DEBUG
-                    Serial.println("Game Started (detected game start fish)");
-#endif
-                }
+        for (int p=0; p<NUM_POSTS; p++) {
+            doComm();
+            //skip to the next post if nothing on this post (and/or has been cleared or previsouly used)
+            if(!posts[p]->isFishPresent()) {
+                continue;
             }
-        } else {
-            //normal game processing here
-            //@FIXME: game logic goes here. Check for incorrect species on any post. Check for correct species on lit post.
             
-            // We have a WINNER if we go past the final sequence
-            if (currentSequencePosition >= SOLUTION_SEQUENCE_LENGTH-1 && ((millis() - lastLightTime) > gracePeriod)) {
-#ifdef DO_DEBUG
-                Serial.println("WINNER, WINNER, WINNER!");
-#endif
-                posts[0]->flashColor(rgbColorforFishSpeciesColorId[fishSpeciesColorId::green]);
-                reset();
-                return;
+            //skip to the next post if fish was removed
+            // Check the timeout for last update from the reader. Clear if we have exceeded the timeout.
+            // This is the amount of time that the tag needs to be off the reader before we acknowledge it.
+            // Need to account for random-ness of when we get updates from the card relative to how often
+            // we "loop".
+			Serial.print(F("LastUpdateTime="));Serial.println(now-posts[p]->getTimeLastUpdated());
+            if ((now - posts[p]->getTimeLastUpdated()) > 500 ) {
+                posts[p]->clearCurrentTag();
+                gameStatusChanged = true;
+        Serial.println(F("================TAG HAS BEEN REMOVED"));
+                continue;
             }
+      
+        if(somethingNewHappened) {
 
+      // If this fish was already used then we can just ignore it
+             if(isFishAlreadyUsed(posts[p]->currentFishTag())) {
+                Serial.println(F("We should be skipping this fish as it's already used"));
+                posts[p]->currentFishTag()->printIdToSerial();
+         // The that post a quick color so you know it's a bad fish
+                posts[p]->quickDoubleFlashColor(alreadyUsedFishColor);
+               continue;
+             }
+            
+            //A fish is on this post. Check if this is the post we're expecting.
+              if (p != postSequence[currentSequencePosition]) {
+                //A fish is present on the wrong post
+#ifdef DO_DEBUG
+                Serial.print("Found fish on wrong post: ");
+                Serial.print(p);
+                Serial.print(" instead of ");
+                Serial.println(postSequence[currentSequencePosition]);
+                Serial.println("FIXME: reset game here **********************************");
+#endif
+                //@FIXME: reset game here
+                gameFailed();
+                gameStatusChanged = true;
+                continue;
+              }
+        
+
+            
+            //A fish is present on the correct post. See if it's the right species (color)
+              if (!fishSpecies[colorSequence[currentSequencePosition]]->isKnownTag(posts[p]->currentFishTag())) {
+#ifdef DO_DEBUG
+                Serial.print("Found incorrect fish on correct post ");
+                Serial.println(postSequence[currentSequencePosition]);
+                Serial.println("FIXME: reset game here **********************************");
+#endif
+                //@FIXME: reset game here
+        
+                gameFailed();
+                gameStatusChanged = true;
+                continue;
+              }
+      
+              foundCorrectFishOnPost(posts[p]->currentFishTag());
+              break;
+      } // End somethingNewHappened
+        }
+        
+        // We have a WINNER if we go past the final sequence
+        if (currentSequencePosition >= SOLUTION_SEQUENCE_LENGTH-1) { // && ((millis() - lastLightTime) > gracePeriod)) {
+#ifdef DO_DEBUG
+            Serial.println("WINNER, WINNER, WINNER!");
+            Serial.println("FIXME: Tell the room this puzzle has been solved **********************************");
+#endif
+            gameCompleted();
+            return;
         }
     }
     
     bool getGameStatusChanged() {
         return gameStatusChanged;
     }
-    
-    void processStartGame() {
+ 
+////////////////////////////////////////////////
+// Create a random solution with the following
+// requirements:
+// 1) The same pole is never used twice in a row
+// 2) There is never more than 3 of the same fish used in the solution   
+  void initRandomGameSequence() {
+      int lastPostPicked = -1;
+    int maxFishPerSpiecesInSolution = 3;
+    unsigned int numRed = 0,numYellow=0,numBlue=0,numGreen=0;
+      for(int i=0;i<SOLUTION_SEQUENCE_LENGTH;i++) {
+        int pval = random(0,3);  // pick a post
+      while(lastPostPicked == pval) {
+               pval = random(0,3);      
+      }
+      lastPostPicked = pval;
+      postSequence[i] = pval;
+      bool pickAgain = true;
+      while(pickAgain) {
+         pval = random(0,4); // Pick a random color
+         if((pval == 0 && numRed == maxFishPerSpiecesInSolution) ||
+            (pval == 1 && numYellow == maxFishPerSpiecesInSolution) ||
+            (pval == 2 && numGreen == maxFishPerSpiecesInSolution) ||
+            (pval == 3 && numBlue == maxFishPerSpiecesInSolution)) {
+            pickAgain = true;
+         } else {
+            pickAgain = false;
+         }
+      }
+      switch(pval) {
+         case 0:
+            colorSequence[i] = red;
+          numRed++;
+         break;
+         case 1:
+            colorSequence[i] = yellow;
+          numYellow++;
+         break;
+         case 2:
+            colorSequence[i] = green;
+          numGreen++;
+         break;
+         case 3:
+            colorSequence[i] = blue;
+          numBlue++;
+         break;
+      }
+//      Serial.print(F("Solution: ")); Serial.print(i);Serial.print(F(" post="));Serial.print(postSequence[i]);
+//      Serial.print(F(" color="));Serial.println(colorSequence[i]);
+    }
+
+  }
+  
+    void activateGame() {
         gameActivated = true;
     }
+	
     
     void processGameLoop() {
+        //Do nothing if the room has not activated this game yet
         if (!gameActivated) {
             return;
         }
-        gameStatusChanged = scanForFish();
-#ifdef DO_DEBUG
-        gameStatusChanged ? Serial.println("Found a new fish!") : (0) ;
-#endif
+        
+        //Check each post for the presence of a fish (RFID tag)
+        gameStatusChanged = scanPostsForFish();
+        doComm();
+//#ifdef DO_DEBUG
+//        gameStatusChanged ? Serial.println(" Found a new fish!") : (0) ;
+//#endif
+        
+        //If the game is activated but not yet started, check for the special game start fish (RFID tag)
         if (!gameInProgress) {
             seekStartFish();
             return;
         }
         lightNextPost();
-        updateGameStatus(); //if game has not yet started, watch for game start fish
+    
+//    Serial.print(F("GameStatusChanged="));Serial.println(gameStatusChanged);
+      
+    doComm();
+//        Serial.print("----------------------------------------GAME STATUS CHANGED=");Serial.println(gameStatusChanged);
+        updateGameStatus(gameStatusChanged);
+    
+    }
+
+
+// TODO: Delete this
+ int freeRam () {
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+}
+    void doTestMode() {
+        for (uint8_t i=0; i<NUM_POSTS; i++) {
+          doComm();
+           if( posts[i]->testReaderStatus()) {
+              // Light the post to indicate working
+              posts[i]->quickDoubleFlashColor(alreadyUsedFishColor);
+              Serial.println(freeRam());
+           }
+        }
+  
     }
 
     void printCurrentGameStatus() {
-        Serial.print("Fish Sorting Game: Active? ");
+        Serial.print(F("Fish Sorting Game ("));
+        Serial.print((int)this,HEX);
+        Serial.print(F("): Active? "));
         Serial.print(gameActivated);
-        Serial.print(" InProgress? ");
+        Serial.print(F(" InProgress? "));
         Serial.print(gameInProgress);
-        Serial.print(" StatusChanged? ");
+        Serial.print(F(" StatusChanged? "));
         Serial.print(gameStatusChanged);
-        Serial.print(" game at sequence ");
+        Serial.print(F(" Sequence? "));
         Serial.print(currentSequencePosition);
-        Serial.print(" of ");
+        Serial.print(F("/"));
         Serial.print(SOLUTION_SEQUENCE_LENGTH);
-        Serial.print(" with ");
+        Serial.print(F(" GracePeriod? "));
         Serial.print(millis()-lastLightTime);
-        Serial.print(" millis of ");
+        Serial.print(F("/"));
         Serial.print(gracePeriod);
         Serial.println();
+    
+    for(int i=0;i<NUM_FISH_SPECIES;i++) {
+       fishSpecies[i]->printUsedTagStatus();
+    }
+    Serial.println();
     }
 };
-FishSortingGame* fsGame; // This is the main game object
+
 
 // **********************************************************************************
-// Reset
+// Reset and other non class methods
 // **********************************************************************************
-void reset() {
+FishSortingGame* fsGame; // This is the main game object
+
+RFIDTag tagsForFishSpecies[NUM_FISH_SPECIES][NUM_FISH_PER_SPECIES] = {
+    { RFIDTag(0x3B, 0x03, 0xFE, 0xC4), RFIDTag(0x6B, 0xA0, 0xFF, 0xC4), RFIDTag(0x6B, 0xBC, 0xFD, 0xC4), RFIDTag(0x5B, 0xB0, 0xFF, 0xC4) },   // red fish ID's
+    { RFIDTag(0xAB, 0xB2, 0x06, 0xC5), RFIDTag(0x6B, 0xED, 0xFD, 0xC4), RFIDTag(0x8B, 0x4C, 0x08, 0xC5), RFIDTag(0x5B, 0x57, 0x21, 0xC5) },   // yellow fish ID's
+    { RFIDTag(0x3B, 0x7E, 0x06, 0xC5), RFIDTag(0xDB, 0xA1, 0x06, 0xC5), RFIDTag(0xCB, 0x50, 0x21, 0xC5), RFIDTag(0xBB, 0x65, 0xFD, 0xC4) },   // green fish ID's
+    { RFIDTag(0xCB, 0xD6, 0x06, 0xC5), RFIDTag(0x8B, 0xF8, 0x06, 0xC5), RFIDTag(0x5B, 0xE8, 0x06, 0xC5), RFIDTag(0x9B, 0xCF, 0x00, 0xC5) }    // blue fish ID's
+};
+
+// TODO: Delete this
+ int freeRam () {
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+}
+
+void resetNode(bool playResetTrack) {
     //This should reset self plus all connected game nodes (if any).
 
 #ifdef DO_DEBUG
     Serial.print("Reset Fish Sorting Game data: ");
     Serial.println(eventData.data);
 #endif
-    
-    fsGame->reset();
+    testModeOnly = false;
+
+  // TODO: DO we need this here? Probabaly but can remove from initialize
+//    fsGame->reset();
+  
+  if(playResetTrack) {
+       playTrack("reset50");
+  }
+
+Serial.print(F("FreeRam="));Serial.println(freeRam());
     
 }
 
-// **********************************************************************************
-// Comm Routine
-// **********************************************************************************
+void doStartGame() {
+    resetNode(false);
+    sendPuzzleStartSuccess();
+ //   momentaryComm(1000);
+    playTrack("start50"); // If we want to hear "game started"
+//  playTrack("track30");
+#ifndef SHORT_TRACK_START
+//  momentaryComm(60000);
+  playTrack("track30a");
+//  momentaryComm(50000);
+  playTrack("track30b"); // This one is 23 seconds long
+#endif
+  fsGame->activateGame();
+}
+
 void receiveCommEvent() {
     //use eventData.whatever to get what was sent and switch
     switch (eventData.event) {
-        case CE_RESET_NODE:
-            reset();
-            break;
-        default:
-            ;
+         case CE_RESET_NODE:
+              resetNode(true);
+          break;
+          case CE_START_PUZZLE: 
+          case CE_RESET_AND_START_PUZZLE:
+             testModeOnly = false;
+             doStartGame();   // Indicates to call all the game start stuff next loop
+          break;
+          case CE_TEST_MODE:
+            Serial.println(F("---------------GOING INTO TEST MODE---------------"));
+            Serial.println(freeRam());
+             testModeOnly = true;
+          break;
     }
 }
 
-// **********************************************************************************
-// Sample Error Handler
-// **********************************************************************************
-void errorHandler(uint8_t code, uint8_t data) {
-    if(code == CONNECTION_LOST) {
-        Serial.print("Connection with device ID ");
-        Serial.print(data);
-        Serial.println(" is lost.");
-    } else if(code == PACKETS_BUFFER_FULL) {
-        Serial.print("Packet buffer is full, has now a length of ");
-        Serial.println(data, DEC);
-        Serial.println("Possible wrong bus configuration!");
-        Serial.println("higher MAX_PACKETS in PJON.h if necessary.");
-    } else if(code == CONTENT_TOO_LONG) {
-        Serial.print("Content is too long, length: ");
-        Serial.println(data);
-    } else {
-        Serial.print("Unknown error code received: ");
-        Serial.println(code);
-        Serial.print("With data: ");
-        Serial.println(data);
-    }
-}
 
-void initializeFishSortingGame () {
+ void momentaryComm(unsigned long howlong) {
+  
+#ifdef DO_DEBUG
+// Serial.print(F("------Momentary Comm START----"));Serial.println(howlong);
+#endif
+    unsigned long start = millis();
+    while(millis()-start < howlong) {
+      doComm();
+    }
+  
+#ifdef DO_DEBUG
+ //Serial.println(F("------Momentary Comm END----"));
+#endif
+  }
+  
+///////////////////////////////////////////////////////////////////
+// Initialize game
+ void initializeFishSortingGame () {
 #ifdef DO_DEBUG
     Serial.println("\nBegin Fish Sorting Game initialization.");
 #endif
@@ -787,10 +1221,12 @@ void initializeFishSortingGame () {
         Serial.println(" fish");
 #endif
         for (int j=0; j<NUM_FISH_PER_SPECIES; j++) {
-            newSpecies->addKnownTag(new RFIDTag(tagIdsForFishSpeciesColorId[i][j], 4)); // 4 bytes in each RFID tag
+//            newSpecies->addKnownTag(new RFIDTag(tagIdsForFishSpeciesColorId[i][j], 4)); // 4 bytes in each RFID tag
+            newSpecies->addKnownTag(&tagsForFishSpecies[i][j]);
         }
         fsGame->addFishSpecies(newSpecies);
     }
+    fsGame->reset();
 #ifdef DO_DEBUG
     Serial.println("End Fish Sorting Game initialization.");
 #endif
@@ -799,6 +1235,8 @@ void initializeFishSortingGame () {
 // **********************************************************************************
 // Setup
 // **********************************************************************************
+
+
 void setup() {
     // Initialize serial communications with the PC
     Serial.begin(9600);
@@ -810,45 +1248,65 @@ void setup() {
 #endif
 
     fsGame = new FishSortingGame();
+    fsGame->setMomentaryComm(momentaryComm);
+
+    initOverrideComm(FISH_SORTING_GAME_NODE,FISH_SORTING_COMM_PIN); 
+    setLocalEventHandler(receiveCommEvent);
+
+  // Initialize random seed value. Using pin 0. It is assumed that this pin is not used.
+  // Doing this allows the random method to return a random sequence from one "run" of the
+  // Arduino to the next.
+    randomSeed(analogRead(0));
 
     initializeFishSortingGame();
+    resetNode(true);
 
-#ifdef GAME_START_EVENT_NOT_REQUIRED
-    fsGame->processStartGame();
+#ifdef GAME_ACTIVATE_EVENT_NOT_REQUIRED
+//    fsGame->activateGame();
 #endif
     
 #ifdef DO_DEBUG
     Serial.println("Setup complete.\n");
 #endif
+ //        sendIntEventToNode(GAME_CONTROLLER_NODE,CE_PING, FISH_SORTING_GAME_NODE);
 }
 
-// **********************************************************************************
-// Main Loop
-// **********************************************************************************
+
+
+
 void loop() {
-    
-    // Event communications
+
 #ifdef DO_GAME_EVENT_COMM
     doComm();
 #endif
     
-    fsGame->processGameLoop();
-    
+    if(!testModeOnly) {
+        fsGame->processGameLoop();
+      
 #ifdef DO_DEBUG
-    if ( fsGame->getGameStatusChanged() || (millis() - fsGame->lastPrintTime) > 5000) {
-        fsGame->printCurrentGameStatus();
-        fsGame->lastPrintTime = millis();
-    }
+      if ( fsGame->getGameStatusChanged() ) {   //|| (millis() - fsGame->lastPrintTime) > 5000) {
+          fsGame->printCurrentGameStatus();
+          fsGame->lastPrintTime = millis();
+      }
 #endif
-    
+    } else {
+
+       fsGame->doTestMode();
+    }
+ 
 }
 
-// **********************************************************************************
-// Helper routine to dump a byte array as hex values to Serial.
-// **********************************************************************************
-void dump_byte_array(byte *buffer, byte bufferSize) {
-    for (byte i = 0; i < bufferSize; i++) {
-        Serial.print(buffer[i] < 0x10 ? " 0" : " ");
-        Serial.print(buffer[i], HEX);
-    }
-}
+
+/***************
+* Play Track. 
+* Just a convenience to send a play track event
+**************/
+  void playTrack(String track) {
+//      sendEventToController(CE_PLAY_TRACK ,rack);  
+      Serial.println(F("Sending event"));
+
+         sendEventToNode(MP3_PLAYER_NODE,CE_PLAY_TRACK, track);
+      
+ 
+  }
+  

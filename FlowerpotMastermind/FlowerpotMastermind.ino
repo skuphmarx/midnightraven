@@ -84,16 +84,16 @@ using namespace std;
 // The RFID has 4 bytes.
 static byte tagIdsByFlowerPot[NUM_KNOWN_FLOWER_POTS][2][4] = {
   { {0xC2, 0x66, 0x7F, 0x64}, {0x2B, 0xEE, 0xFD, 0xC4} },   // 1.1, 1.2
-  { {0x54, 0x99, 0xDE, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 2.1, 2.2
-  { {0xE6, 0x93, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 3.1, 3.2
-  { {0xD4, 0x5E, 0x15, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 4.1, 4.2
-  { {0x52, 0xC1, 0x78, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 5.1, 5.2
-  { {0xE6, 0xD3, 0x2D, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 6.1, 6.2
-  { {0xF2, 0x92, 0x83, 0x64}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 7.1, 7.2
-  { {0x86, 0xF0, 0x2A, 0x12}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 8.1, 8.2
-//  { {0x92, 0x0F, 0x43, 0x6D}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
-  { {0xC4, 0xBE, 0xF7, 0xF4}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
-  { {0xF4, 0x68, 0x9B, 0xFC}, {0xFF, 0xFF, 0xFF, 0xFF} }    // 10.1, 10.2
+  { {0x54, 0x99, 0xDE, 0xFC}, {0xFB, 0x62, 0x08, 0xC5} },   // 2.1, 2.2
+  { {0xE6, 0x93, 0x2A, 0x12}, {0x9B, 0x8C, 0xFD, 0xC4} },   // 3.1, 3.2
+  { {0xD4, 0x5E, 0x15, 0xFC}, {0x7B, 0xD8, 0x00, 0xC5} },   // 4.1, 4.2
+  { {0x52, 0xC1, 0x78, 0x64}, {0x3B, 0x14, 0xFE, 0xC4} },   // 5.1, 5.2
+  { {0xE6, 0xD3, 0x2D, 0x12}, {0xDB, 0x50, 0x21, 0xC5} },   // 6.1, 6.2
+  { {0xF2, 0x92, 0x83, 0x64}, {0x1B, 0xB5, 0x06, 0xC5} },   // 7.1, 7.2
+  { {0x86, 0xF0, 0x2A, 0x12}, {0xDB, 0xC5, 0x06, 0xC5} },   // 8.1, 8.2
+//  { {0x92, 0x0F, 0x43, 0x6D}, {0xFB, 0x84, 0x20, 0xC5} },   // 9.1, 9.2
+    { {0xC4, 0xBE, 0xF7, 0xF4}, {0xFF, 0xFF, 0xFF, 0xFF} },   // 9.1, 9.2
+  { {0xF4, 0x68, 0x9B, 0xFC}, {0x6B, 0x81, 0x06, 0xC5} }    // 10.1, 10.2
 };
 
 // TODO:  Put business card here for repeat.  Or maybe just use any unrecognized tag?
@@ -435,6 +435,7 @@ class MasterMindFlowerPotGame {
     MasterMindGameSolution* solutions[NUM_GAME_SOLUTIONS];
 
     bool gameIsStarted = false;
+    bool gameIsFinished = false;
     
     bool gameStatusChanged = false;
     byte numberFlowerPotsOnReaders = 0;
@@ -447,6 +448,10 @@ class MasterMindFlowerPotGame {
     long firstGuessTimeMillis = 0;
     long mostRecentGuessTimeMillis = 0;
     long solutionFoundTimeMillis = 0;
+
+    unsigned long TIME_BEFORE_POT_REMOVED = 2000; // Number of seconds before a pot is seen as gone
+
+    bool businessCardPresent = false; // Set to true the first time an unrecognized tag is found on middle reader
 
     /**
      * Chooses a new random solution from one of the possible solutions and returns the index
@@ -494,7 +499,13 @@ class MasterMindFlowerPotGame {
           // This is the amount of time that the tag needs to be off the reader before we acknowledge it.
           // Need to account for random-ness of when we get updates from the card relative to how often
           // we "loop". 
-          if ((now - mmReader->getTimeLastUpdated()) > 2000 ) {
+          if ((now - mmReader->getTimeLastUpdated()) > 1500 ) {
+Serial.print(F("CLEARING TAG "));
+Serial.println(reader);
+ Serial.print(F("last time updated="));
+ Serial.println(mmReader->getTimeLastUpdated());
+ Serial.print(F(" now = "));
+ Serial.println(now);
             mmReader->clearCurrentTag();
             gameStatusChanged = true;
             
@@ -504,13 +515,21 @@ class MasterMindFlowerPotGame {
             numberFlowerPotsOnReaders++;
 
             // Loop over all the pots and set the current pot independent of it being correct or not
+            bool recognizedTag = false;
             for (uint8_t ipot=0; ipot<numFlowerPots; ipot++) {
               FlowerPot* flowerPot = flowerPots[ipot];
               if (flowerPot->isKnownTag(mmReader->getCurrentTag())) {
                 mmReader->setCurrentFlowerPot(flowerPot);
+                recognizedTag = true;
               }
             }
-
+            // TODO if the second reader, if no pot found above then check for business card on middle reader.
+            if(reader == 1 && !recognizedTag && !businessCardPresent) {
+               Serial.println(F("BUSINESS CARD ON SECOND READER FOUND"));
+               businessCardPresent = true;
+               replayInstructions = true;
+            }
+            
             // See if this pot is one of the answers
             MasterMindGameSolution* currentSolution = solutions[gameSolutionNumber];
             if (currentSolution->isTagInSolution(mmReader->getCurrentTag())) {
@@ -519,9 +538,25 @@ class MasterMindFlowerPotGame {
             }
             
           }
+        } else if(reader == 1 && businessCardPresent) {
+          businessCardPresent = false;  // Card was removed
         }
       }
 
+    }
+
+// If you move a correct pot from one tag, quickly to another, it doesn't register the coming off for a second or two
+// but will register the putting on so you end up with a solution with the same tag > once. CHEATER!
+    bool arePotsDuplicated() {
+      Serial.println(F("Checking for duplicate tags"));
+      bool ret = false;
+      if(*(readers[0]->getCurrentTag()) == *(readers[1]->getCurrentTag()) || 
+        *(readers[0]->getCurrentTag()) == *(readers[2]->getCurrentTag()) ||
+        *(readers[1]->getCurrentTag()) == *(readers[2]->getCurrentTag()) ) {
+        Serial.println(F("FOUND TWO OF THE SAME TAGS"));
+        ret = true;
+      }
+      return ret;
     }
 
     void processStatisticsUpdate() {
@@ -566,6 +601,7 @@ Serial.println(solutionFoundTimeMillis);
   public:
 
     unsigned long lastPrintTime = 0;
+    bool replayInstructions = false;  // if set, an event is sent to replay the old man's instructions
 
     MasterMindFlowerPotGame() {
       numReaders = 0;  
@@ -634,6 +670,7 @@ Serial.println(solutionFoundTimeMillis);
     
     void reset() {
       gameStatusChanged = false;
+      gameIsFinished = false;
       numberFlowerPotsOnReaders = 0;
       numberCorrectFlowerPots = 0;
       gameStartTimeMillis = 0;
@@ -664,6 +701,14 @@ Serial.println(solutionFoundTimeMillis);
       gameIsStarted = val;
     }
 
+    bool isGameFinished() {
+      return gameIsFinished;
+    }
+
+    void setGameFinished(bool val) {
+      gameIsFinished = val;
+    }
+
     uint8_t getNumberFlowerPotsOnReaders() {
       return numberFlowerPotsOnReaders;
     }
@@ -681,7 +726,11 @@ Serial.println(solutionFoundTimeMillis);
     }
 
     bool isGameSolved() {
-      return (numberCorrectFlowerPots == NUM_POTS_PER_SOLUTION);
+      if(numberCorrectFlowerPots == NUM_POTS_PER_SOLUTION &&
+         !arePotsDuplicated()) {
+          return true;
+       }
+       return false;
     }
 
     /**
@@ -697,7 +746,7 @@ Serial.println(solutionFoundTimeMillis);
       processReaderCurrentStatus();
 
       // Update Statistics
-      if (gameStatusChanged) {
+      if (gameStatusChanged && !isGameFinished()) {
         processStatisticsUpdate();
       }
        
@@ -733,7 +782,7 @@ Serial.println(solutionFoundTimeMillis);
 // This is the main game object
 MasterMindFlowerPotGame* mmGameInstance;
 int numberOfAttempts = 0;
-
+String repeatTrack;
 /**
  * Arduino initialization entry point.
  */
@@ -742,7 +791,6 @@ void setup() {
   // Initialize serial communications with the PC
   Serial.begin(9600); 
   while (!Serial);    // Do nothing if no serial port is opened (added for Arduinos based on ATMEGA32U4)
-
 #ifdef DO_INFO
   printBegin(F("Setup"));
 #endif
@@ -760,6 +808,7 @@ void setup() {
 
   // Initialize game event communications
   initializeGameEventComm();
+  
 
 #ifdef GAME_START_EVENT_NOT_REQUIRED
   mmGameInstance->processStartGame();
@@ -792,7 +841,6 @@ MasterMindFlowerPotGame* initializeMastermind() {
     fp->addKnownTag(new RFIDTag(tagIdsByFlowerPot[ip][1], 4));
     newGame->addFlowerPot(fp);    
   }
-
   // Initialize the game solutions. This call needs to occur after all the pots and readers have been added to the game.
   newGame->initializeGameSolutions();
 
@@ -814,11 +862,13 @@ void initializeGameEventComm() {
   Serial.println(GAME_COMM_PIN);
 //#endif
 
-  //setCommUtilsReceiveTimeout(2000);
+//  setCommUtilsReceiveTimeout(2000);
   
   initOverrideComm(MASTER_MIND_POT_GAME_NODE, GAME_COMM_PIN);
   setLocalEventHandler(receiveCommEvent);
-  setLocalErrorHandler(errorHandler);
+//  setLocalErrorHandler(errorHandler);
+
+  commUtilsReceiveTimeout = 1000;  // TODO: comment out to reset to default
 //#ifdef DO_DEBUG  
   printEnd(F("CommNodeInit"));
 //#endif
@@ -885,6 +935,7 @@ void receiveCommEvent() {
   //use eventData.whatever to get what was sent and switch
   switch (eventData.event) {
     case CE_RESET_NODE:
+        Serial.println(F("Recieve Puzzle RESET Event"));    
       reset();
 //      respondAckToSender();
       break;
@@ -928,42 +979,25 @@ void processReceivedStartGame() {
   // Play the tracks to start the game
   uint8_t  whichSolution = mmGameInstance->getGameSolutionNumber();
   String startTrack = "track11";
+  repeatTrack="track11r";
   if(whichSolution == 1) {
     startTrack = "track12";
+    repeatTrack = "track12r";
   } else if(whichSolution == 2) {
     startTrack = "track13";
+    repeatTrack = "track13r";
   }
-  sendAudioEvent(startTrack);
+//  sendAudioEvent(startTrack);
 
   // TODO we should probably just do comm here for the length of the track and then start looking at the RFIDs
-  momentaryComm(90000); // The track is about 2 minutes so wait 1:30
+//  momentaryComm(90000); // The track is about 2 minutes so wait 1:30
+  
+ // This is a short version for testing. uncomment above and get rid of this when ready 
+    sendAudioEvent(repeatTrack);
+  momentaryComm(10000);
 }
 
-//Sample Error Handler
-void errorHandler(uint8_t code, uint8_t data) {
-  if(code == CONNECTION_LOST) {
-    Serial.println(F("CMErr1"));
-    //Serial.print("MM Connection with device ID ");
-    //Serial.print(data);
-    //Serial.println(" is lost.");
-  } else if(code == PACKETS_BUFFER_FULL) {
-    Serial.println(F("CMErr2"));
-//    Serial.print("MM Packet buffer is full, has now a length of ");
-//    Serial.println(data, DEC);
-//    Serial.println("Possible wrong bus configuration!");
-//    Serial.println("higher MAX_PACKETS in PJON.h if necessary.");
-  } else if(code == CONTENT_TOO_LONG) {
-    Serial.println(F("CMErr3"));
-//    Serial.print("MM Content is too long, length: ");
-//    Serial.println(data);
-  } else {
-    Serial.println(F("CMErr4"));
-//    Serial.print("MM Unknown error code received: ");
-//    Serial.println(code);
-//    Serial.print("With data: ");
-//    Serial.println(data);
-  }
-}
+
 
 // **********************************************************************************
 // Main Loop
@@ -986,11 +1020,20 @@ void loop() {
 void processGameLoopIteration() {
   if (mmGameInstance->isGameStarted()) {
     mmGameInstance->updateGameStatus();
+
+    doComm();
+    
     processSendEvents(mmGameInstance);
     
     if (mmGameInstance->getGameStatusChanged() || (millis() - mmGameInstance->lastPrintTime) > 15000) {
       printCurrentGameStatus(mmGameInstance);
       mmGameInstance->lastPrintTime = millis();
+
+      if(mmGameInstance->replayInstructions) {
+        Serial.println(F("Replay instructions is true"));
+        mmGameInstance->replayInstructions = false;  // Make sure and only play once
+        sendAudioEvent(repeatTrack);  // Play the short version of what to do
+      }
     }
 
   }
@@ -1002,7 +1045,11 @@ void processGameLoopIteration() {
 void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 
 #ifdef DO_PLAY_GAME_LOGGING
-  if (mmGame->isGameSolved()) {
+  if (mmGame->isGameFinished()) {
+    Serial.print(F("-- "));
+    Serial.print(F("Game is finished! Duration(ms): "));
+    Serial.println(mmGame->getSolutionFoundTimeMillis() - mmGame->getFirstPotTimeMillis());
+  } else if (mmGame->isGameSolved()) {
     Serial.print(F("-- "));
     Serial.print(F("You Win! Duration(ms): "));
     Serial.println(mmGame->getSolutionFoundTimeMillis() - mmGame->getFirstPotTimeMillis());
@@ -1055,7 +1102,7 @@ void printCurrentGameStatus(MasterMindFlowerPotGame* mmGame) {
 
 void processSendEvents(MasterMindFlowerPotGame* mmGame) {
 
-  if (mmGame->getGameStatusChanged()) {
+  if (mmGame->getGameStatusChanged() && !mmGame->isGameFinished()) {
     if (mmGame->isGameSolved()) {
      gameCompleted();
       
@@ -1084,6 +1131,8 @@ void gameCompleted() {
       momentaryComm(10000);
       sendControllerImportantEvent(CE_PUZZLE_COMPLETED,CE_PUZZLE_COMPLETED_SUCCESS,MASTER_MIND_POT_GAME_NODE);
       mmGameInstance->setGameStarted(false);
+      mmGameInstance->setGameFinished(true);
+
       reset();
 }
 
@@ -1108,7 +1157,7 @@ void sendAudioEvent(String audioId) {
     momentaryComm(500);
 }
 
-void momentaryComm(unsigned int len) {
+void momentaryComm(unsigned long len) {
    unsigned long start = millis();
    while((millis() - start) < len) {
       doComm();
